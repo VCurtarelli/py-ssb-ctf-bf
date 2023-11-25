@@ -101,6 +101,7 @@ def calcSV(Rm, Psim, t, f, c):
 
 def calcRev(sv, Hn, fs, freq_mode, pre=True):
     D_tx_n = np.real(ifft(sv))
+    Hn = np.copy(Hn)
     if pre:
         Hn[0] += 1
     Hn = np.convolve(Hn, D_tx_n, 'full')

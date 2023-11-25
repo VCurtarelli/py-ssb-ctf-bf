@@ -10,7 +10,7 @@ from scipy.signal import stft, istft
 from scipy.fft import fft, ifft
 from f_ssbt import ssbt, issbt, rft, irft
 
-np.set_printoptions(suppress=True, precision=4)
+np.set_printoptions(suppress=True, precision=2)
 
 
 def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
@@ -52,7 +52,7 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
     # ---------------
     # Constants
 
-    dx = 0.015  # x-axis spacing
+    dx = 0.018  # x-axis spacing
     c = 343  # wave speed (speed of sound)
 
     ## ---------------
@@ -79,10 +79,7 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
     apoints = 21
     nperseg = 32
     fs = 8000
-    if freq_mode == 'stft':
-        sym_freqs = np.linspace(0, fs, nperseg + 1)[:(1 + nperseg) // 2 + 1]
-    else:
-        sym_freqs = np.linspace(0, fs, nperseg)[:nperseg]
+    sym_freqs = np.linspace(0, fs, nperseg + 1)[:(1 + nperseg) // 2 + 1]
     sym_angles = np.linspace(0, 180, apoints)
     sym_angles = np.concatenate([sym_angles, - 180 + sym_angles[1:-1], [-180]])
 
@@ -111,19 +108,26 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
     Glk_ = []
     Tlk_angles = []
     freqs_t = []
+    Hlk_true_ = []
+    Glk_true_ = []
     for m in range(Arr_PA.M):
         sv_tx_f = calcSV(Arr_PA.r[m], Arr_PA.p[m], tx_rad, f, c)
-        freqs_t, Hlk_m = calcRev(sv_tx_f, Hn, fs, freq_mode)
+        freqs_t, Hlk_m = calcRev(sv_tx_f, Hn, fs, freq_mode=freq_mode)
         Hlk_.append(Hlk_m)
 
         sv_tv_f = calcSV(Arr_PA.r[m], Arr_PA.p[m], tv_rad, f, c)
-        _, Glk_m = calcRev(sv_tv_f, Hn, fs, freq_mode)
+        _, Glk_m = calcRev(sv_tv_f, Hn, fs, freq_mode=freq_mode)
         Glk_.append(Glk_m)
+
+        freqs_t_true, Hlk_m_true = calcRev(sv_tx_f, Hn, fs, freq_mode='stft')
+        _, Glk_m_true = calcRev(sv_tv_f, Hn, fs, freq_mode='stft')
+        Hlk_true_.append(Hlk_m_true)
+        Glk_true_.append(Glk_m_true)
 
         Tlk_ = []
         for a_idx, angle in enumerate(sym_angles):
             sv_ta_f = calcSV(Arr_PA.r[m], Arr_PA.p[m], np.deg2rad(angle), f, c)
-            _, Tlk_m = calcRev(sv_ta_f, Hn, fs, freq_mode)
+            _, Tlk_m = calcRev(sv_ta_f, Hn, fs, freq_mode='stft')
             Tlk_.append(Tlk_m)
         Tlk = np.zeros(Tlk_[0].shape + (sym_angles.size,), dtype=complex)
         for a_idx, angle in enumerate(sym_angles):
@@ -132,19 +136,20 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
 
     Hlk = np.zeros(Hlk_[0].shape + (Arr_PA.M,), dtype=complex)
     Glk = np.zeros(Glk_[0].shape + (Arr_PA.M,), dtype=complex)
+    Hlk_true = np.zeros(Hlk_true_[0].shape + (Arr_PA.M,), dtype=complex)
+    Glk_true = np.zeros(Glk_true_[0].shape + (Arr_PA.M,), dtype=complex)
     Tlk = np.zeros(Tlk_angles[0].shape + (Arr_PA.M,), dtype=complex)
     for m in range(Arr_PA.M):
         Hlk[:, :, m] = Hlk_[m]
         Glk[:, :, m] = Glk_[m]
+        Hlk_true[:, :, m] = Hlk_true_[m]
+        Glk_true[:, :, m] = Glk_true_[m]
         Tlk[:, :, :, m] = Tlk_angles[m]
-
-    # Hlk = 1 + Hlk
-    # Glk = 1 + Glk
 
     ## ---------------
     ## Frequency sims
     Zk_ = np.zeros([freqs_t.size, Arr_PA.M], dtype=complex)
-    for k_idx, k in enumerate(freqs_t):
+    for k_idx, k in enumerate(sym_freqs):
         ## ---------------
         ## Variable reorganization
         Hk = Hlk[k_idx, :, :]
@@ -159,11 +164,22 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
             pH_l = Hk_[idx_l, :].reshape(-1, 1)
             Corr_w_true += (pH_l @ he(pH_l)) * Var_X
         for idx_l in range(Gk.shape[0]):
-            pG_l = Gk[idx_l, :]
+            pG_l = Gk[idx_l, :].reshape(-1, 1)
             Corr_w_true += (pG_l @ he(pG_l)) * Var_V
         Corr_w_true += np.identity(Arr_PA.M) * Var_R
         iCorr_w_true = inv(Corr_w_true)
 
+        Corr_w_true_true = np.zeros([Arr_PA.M, Arr_PA.M], dtype=complex)
+        for idx_l in range(1, Hk.shape[0]):
+            pH_l = Hlk_true[k_idx, idx_l, :].reshape(-1, 1)
+            Corr_w_true_true += (pH_l @ he(pH_l)) * Var_X
+        for idx_l in range(Gk.shape[0]):
+            pG_l = Glk_true[k_idx, idx_l, :].reshape(-1, 1)
+            Corr_w_true_true += (pG_l @ he(pG_l)) * Var_V
+        Corr_w_true_true += np.identity(Arr_PA.M) * Var_R
+
+        print(Corr_w_true)
+        print(Corr_w_true_true)
         match tf_mode:
             case 'mtf':
                 pG_0 = Gk[0, :].reshape(-1, 1)
@@ -179,7 +195,43 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
 
         Arr_PA.d_x = dk_x
         Arr_PA.h = zk_mvdr
-        
+
+        if freq_mode == 'ssbt':
+            ## ---------------
+            ## Variable reorganization
+            Hk = Hlk[-k_idx, :, :]
+            Gk = Glk[-k_idx, :, :]
+            dk_x = Hk[0, :]
+            Hk_ = Hk[1:, :]
+
+            ## ---------------
+            ## Undesired signal correlation matrix
+            Corr_w_true = np.zeros([Arr_PA.M, Arr_PA.M], dtype=complex)
+            for idx_l in range(Hk_.shape[0]):
+                pH_l = Hk_[idx_l, :].reshape(-1, 1)
+                Corr_w_true += (pH_l @ he(pH_l)) * Var_X
+            for idx_l in range(Gk.shape[0]):
+                pG_l = Gk[idx_l, :]
+                Corr_w_true += (pG_l @ he(pG_l)) * Var_V
+            Corr_w_true += np.identity(Arr_PA.M) * Var_R
+            iCorr_w_true = inv(Corr_w_true)
+
+            match tf_mode:
+                case 'mtf':
+                    pG_0 = Gk[0, :].reshape(-1, 1)
+                    Corr_w_tf = (pG_0 @ he(pG_0)) * Var_V + np.identity(Arr_PA.M) * Var_R
+                    iCorr_w_tf = inv(Corr_w_tf)
+                case 'ctf':
+                    Corr_w_tf = Corr_w_true
+                    iCorr_w_tf = iCorr_w_true
+            ## ---------------
+            ## Beamforming
+            zk_mvdr_ = (iCorr_w_tf @ dk_x) / (he(dk_x) @ iCorr_w_tf @ dk_x)
+            Zk_[k_idx, :] = zk_mvdr
+
+            zk_mvdr = (zk_mvdr + np.conj(zk_mvdr_))/2
+            dk_x = Hlk_true[k_idx, 0, :]
+
         ## ---------------
         ## Metrics
         for a_idx, angle in enumerate(sym_angles):
@@ -188,7 +240,7 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
             Arr_PA.beam[k_idx, a_idx] = bpt
 
         Arr_PA.wng[k_idx] = calcwng(zk_mvdr, dk_x)
-        Arr_PA.gain[k_idx] = calcgain(zk_mvdr, dk_x, Corr_w_true, Corr_w_true[0, 0])
+        Arr_PA.gain[k_idx] = calcgain(zk_mvdr, dk_x, Corr_w_true_true, Corr_w_true_true[0, 0])
         Arr_PA.df[k_idx] = calcdf(Arr_PA, k, c)
 
         ## ---------------
@@ -270,7 +322,7 @@ def main():
     for name in sizes.keys():
         size = sizes[name]
         simulation(size,
-                   freq_mode='ssbt',
+                   freq_mode='stft',
                    tf_mode='ctf')
 
 

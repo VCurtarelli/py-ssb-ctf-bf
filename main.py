@@ -106,6 +106,7 @@ def simulation(sizes: Params, freq_mode: str = 'stft', tf_mode: str = 'ctf'):
     Hn = np.exp(-200 * n / fs)
     n = n[Hn >= 0.01]
     Hn = Hn[Hn >= 0.01]
+    Hn[0] += 1
     f = np.linspace(0, fs, n.size)
     Hlk_ = []
     Glk_ = []
@@ -270,8 +271,8 @@ def main():
     for name in sizes.keys():
         size = sizes[name]
         simulation(size,
-                   freq_mode='ssbt',
-                   tf_mode='ctf')
+                   freq_mode='stft',
+                   tf_mode='mtf')
 
 
 if __name__ == '__main__':

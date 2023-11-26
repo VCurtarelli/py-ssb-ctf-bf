@@ -99,18 +99,15 @@ def calcSV(Rm, Psim, t, f, c):
     return d1_m
 
 
-def calcRev(sv, Hn, fs, freq_mode, pre=True):
+def calcRev(sv, Hn, fs, freq_mode):
     D_tx_n = np.real(ifft(sv))
-    if pre:
-        Hn[0] += 1
+    Hn = np.copy(Hn)
     Hn = np.convolve(Hn, D_tx_n, 'full')
     match freq_mode:
         case 'stft':
             freqs, _, Hlk = stft(Hn, fs, nperseg=32)
         case 'ssbt':
             freqs, _, Hlk = ssbt(Hn, fs, nperseg=32)
-    if not pre:
-        Hlk = 1 + Hlk
 
     return freqs, Hlk
 

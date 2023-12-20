@@ -140,7 +140,7 @@ def calcbeam(h, d):
 
 def calcgain(h, d, Corr_V, Var_V):
 
-    gain = Var_V * abs(d[0])**2 / (he(h) @ Corr_V @ h)
+    gain = Var_V * abs(he(h) @ d)**2 / (he(h) @ Corr_V @ h)
     gain = np.real(gain).item()
     if all is True:
         return gain
@@ -226,13 +226,13 @@ def calcGzp(Arr, f, c, epsilon=0):
     return Gzp
 
 
-def calcdf(Arr, f, c):
+def calcdf(Arr, h, d, f, c):
     # Calculates directivity factor
     Gzp = calcGzp(Arr, f, c)
-    h = Arr.h
-    d_x = Arr.d_x
+##    h = Arr.h
+##    d_x = Arr.d_x
 
-    df = 1 / (np.abs(d_x)**2 * he(h) @ Gzp @ h)
+    df = 1 / (he(h) @ Gzp @ h)
     df = df.item()
     df = np.real(df)
 
@@ -348,6 +348,7 @@ class Array:
         self.h = None
         self.d_x = None
         self.gain = None
+        self.gain_expec = None
         self.beam = None
         self.wng = None
         self.dsdi = None
@@ -401,6 +402,7 @@ class Array:
         self.snr = np.zeros([len_f])
         self.fnbw = np.zeros([len_f])
         self.gain = np.zeros([len_f])
+        self.gain_expec = np.zeros([len_f])
 
     def show_array(self):
         show_array(self.Pos, self.M, "array")

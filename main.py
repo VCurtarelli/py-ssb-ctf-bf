@@ -10,18 +10,17 @@ import scipy.io
 from scipy.signal import stft, istft
 from scipy.fft import fft, ifft
 from f_ssbt import ssbt, issbt, rft, irft
+import gen_palette as gp
 
 np.set_printoptions(suppress=True, precision=4)
 
 
-def simulation(freq_mode: str = 'stft', tf_mode: str = 'ctf', res_mode='save'):
+def simulation(freq_mode: str = 'stft', res_mode='save'):
     """
     Parameters
     ----------
     freq_mode: str
         Which to use, STFT or SSBT. Defaults to STFT.
-    tf_mode: str
-        Which to use, CTF or MTF. Defaults to CTF.
     res_mode: str
         Which results to make, 'plot:name_of_metric' or 'save-to-file'. Defaults to save-to-file ('save').
     Returns
@@ -50,12 +49,8 @@ def simulation(freq_mode: str = 'stft', tf_mode: str = 'ctf', res_mode='save'):
     """
 
     freq_mode = freq_mode.lower()
-    tf_mode = tf_mode.lower()
     if freq_mode not in ['ssbt', 'stft']:
         raise SyntaxError('Invalid frequency mode.')
-
-    if tf_mode not in ['ctf', 'mtf']:
-        raise SyntaxError('Invalid transfer function model.')
 
     """
         -------------
@@ -103,7 +98,7 @@ def simulation(freq_mode: str = 'stft', tf_mode: str = 'ctf', res_mode='save'):
 
     n_bins_star = (1 + n_per_seg)//2 + 1
     n_win_rir = int(np.ceil(2*len_rir/n_per_seg + 1))
-    sym_freqs = np.linspace(0, fs, n_per_seg + 1)[:n_bins]
+    sym_freqs = np.linspace(0, fs, n_per_seg + 1)[:n_bins_star]
     win_p_fil = 100
     dist_fil = -1  # INFO: If "win_p_fil = -1", uses whole signal
     m_ref = 0
@@ -306,17 +301,18 @@ def simulation(freq_mode: str = 'stft', tf_mode: str = 'ctf', res_mode='save'):
 
     if dist_fil == -1:
         dist_fil = n_win_Y
+        win_p_fil = n_win_Y
 
-    # dist_fil = 10
+    dist_fil = 100
+    win_p_fil = 1000
     F_lk = np.empty((n_bins, int(np.ceil(n_win_Y / dist_fil)), n_sensors), dtype=complex)
     n_win_F = F_lk.shape[1]
     for k_idx in range(n_bins):
         dx = dx_k[k_idx, :]
-        idx_stt = 0
-        idx_end = dist_fil
-        l_idx = 0
-        while True:
+        for l_idx in range(n_win_F):
             # INFO: Separating necessary windows of Y_lk, and calculating coherence matrix
+            idx_stt = max(0, (l_idx+1)*dist_fil-win_p_fil)
+            idx_end = min((l_idx+1)*dist_fil, n_win_Y)
             Y = Y_lk[k_idx, idx_stt:idx_end, :]
             Corr_Y = np.empty([n_sensors, n_sensors], dtype=complex)
             for idx_i in range(n_sensors):
@@ -325,22 +321,13 @@ def simulation(freq_mode: str = 'stft', tf_mode: str = 'ctf', res_mode='save'):
                     Corr_Y[idx_j, idx_i] = np.conj(Corr_Y[idx_i, idx_j])
             F_lk[k_idx, l_idx, :] = Corr_Y @ tr(dx) / (np.conj(dx) @ Corr_Y @ tr(dx) + epsilon)
 
-            if idx_end == n_win_Y:
-                break
-            idx_end += dist_fil
-            l_idx += 1
-            if idx_end >= win_p_fil:
-                idx_stt = idx_end - win_p_fil
-            if idx_end >= n_win_Y:
-                idx_end = n_win_Y
-
+    # Info: Converting filter from GEFT to STFT
     match freq_mode:
         case 'stft':
             # Info: F_lk_star.shape = [n_bins_star, n_win_F, n_sensors]
             F_lk_star = F_lk
         case 'ssbt':
-            F_lk_star = np.empty((n_bins_star, n_win_F, n_sensors), dtype=float)
-
+            F_lk_star = np.empty((n_bins_star, n_win_F, n_sensors), dtype=complex)
             for l_idx in range(n_win_F):
                 for m in range(n_sensors):
                     fm_ln = irft(F_lk[:, l_idx, m])
@@ -362,12 +349,11 @@ def simulation(freq_mode: str = 'stft', tf_mode: str = 'ctf', res_mode='save'):
             W = W_lk_star[k_idx, l_idx, :].reshape(-1, 1)
             Y = Y_lk_star[k_idx, l_idx, :].reshape(-1, 1)
 
-            Sf_lk_star[k_idx, l_idx] = he(F) @ S
-            If_lk_star[k_idx, l_idx] = he(F) @ I
-            Rf_lk_star[k_idx, l_idx] = he(F) @ R
-            Wf_lk_star[k_idx, l_idx] = he(F) @ W
-            Yf_lk_star[k_idx, l_idx] = he(F) @ Y
-
+            Sf_lk_star[k_idx, l_idx] = (he(F) @ S).item()
+            If_lk_star[k_idx, l_idx] = (he(F) @ I).item()
+            Rf_lk_star[k_idx, l_idx] = (he(F) @ R).item()
+            Wf_lk_star[k_idx, l_idx] = (he(F) @ W).item()
+            Yf_lk_star[k_idx, l_idx] = (he(F) @ Y).item()
     """
         -----------
         - Metrics -
@@ -384,243 +370,118 @@ def simulation(freq_mode: str = 'stft', tf_mode: str = 'ctf', res_mode='save'):
     #       iSINR_lk    : Narrowband input SNR averaged (w/ rho) [scalar, dB]
     #       oSINR_lk    : Narrowband output SNR averaged (w/ rho) [scalar, dB]
 
-    iSINR_lk = np.empty((n_bins_star, n_win_F), dtype=complex)
-    oSINR_lk = np.empty((n_bins_star, n_win_F), dtype=complex)
-    iSINR_k = np.empty((n_bins_star,), dtype=complex)
-    oSINR_k = np.empty((n_bins_star,), dtype=complex)
+    iSINR_lk = np.empty((n_bins_star, n_win_F), dtype=float)
+    oSINR_lk = np.empty((n_bins_star, n_win_F), dtype=float)
+    gSINR_lk = np.empty((n_bins_star, n_win_F), dtype=float)
+    iSINR_k = np.empty((n_bins_star,), dtype=float)
+    oSINR_k = np.empty((n_bins_star,), dtype=float)
+    gSINR_k = np.empty((n_bins_star,), dtype=float)
 
     for k_idx in range(n_bins_star):
-        idx_stt = 0
-        idx_end = dist_fil
-        l_idx = 0
-        while True:
-            S = S_lk_star[k_idx, idx_stt:idx_end, 0].reshape(-1, 1)
-            W = W_lk_star[k_idx, idx_stt:idx_end, 0].reshape(-1, 1)
+        S = S_lk_star[k_idx, :].reshape(-1, 1)
+        W = W_lk_star[k_idx, :].reshape(-1, 1)
 
-            Sf = Sf_lk_star[k_idx, idx_stt:idx_end, 0].reshape(-1, 1)
-            Wf = Wf_lk_star[k_idx, idx_stt:idx_end, 0].reshape(-1, 1)
+        Sf = Sf_lk_star[k_idx, :].reshape(-1, 1)
+        Wf = Wf_lk_star[k_idx, :].reshape(-1, 1)
 
-            var_S = he(S) @ S
-            var_W = he(W) @ W
+        var_S = (he(S) @ S).item()
+        var_W = (he(W) @ W).item()
 
-            var_Sf = he(S) @ Sf
-            var_Wf = he(W) @ Wf
+        var_Sf = (he(Sf) @ Sf).item()
+        var_Wf = (he(Wf) @ Wf).item()
 
-            iSNR_lk = var_S / (var_W + epsilon)
-            oSNR_lk = var_Sf / (var_Wf + epsilon)
+        iSINR = var_S / (var_W + epsilon)
+        oSINR = var_Sf / (var_Wf + epsilon)
+        iSINR_k[k_idx] = np.real(dB(iSINR))
+        oSINR_k[k_idx] = np.real(dB(oSINR))
+        gSINR_k[k_idx] = np.real(dB(oSINR / (iSINR + epsilon)))
 
-            if idx_end == n_win_Y:
-                break
-            idx_end += dist_fil
-            l_idx += 1
-            if idx_end >= win_p_fil:
-                idx_stt = idx_end - win_p_fil
-            if idx_end >= n_win_Y:
-                idx_end = n_win_Y
+        for l_idx in range(n_win_F):
+            idx_stt = max(0, (l_idx + 1) * dist_fil - n_win_Y)
+            idx_end = min((l_idx + 1) * dist_fil, n_win_Y)
+            S = S_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
+            W = W_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
 
-        S = S_lk_star[k_idx, :, 0].reshape(-1, 1)
-        W = W_lk_star[k_idx, :, 0].reshape(-1, 1)
+            Sf = Sf_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
+            Wf = Wf_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
 
-        Sf = Sf_lk_star[k_idx, :, 0].reshape(-1, 1)
-        Wf = Wf_lk_star[k_idx, :, 0].reshape(-1, 1)
+            var_S = (he(S) @ S).item()
+            var_W = (he(W) @ W).item()
 
-        var_S = he(S) @ S
-        var_W = he(W) @ W
+            var_Sf = (he(Sf) @ Sf).item()
+            var_Wf = (he(Wf) @ Wf).item()
 
-        var_Sf = he(S) @ Sf
-        var_Wf = he(W) @ Wf
-
-        iSNR_k = var_S / (var_W + epsilon)
-        oSNR_k = var_Sf / (var_Wf + epsilon)
+            iSINR = var_S / (var_W + epsilon)
+            oSINR = var_Sf / (var_Wf + epsilon)
+            iSINR_lk[k_idx, l_idx] = np.real(dB(iSINR))
+            oSINR_lk[k_idx, l_idx] = np.real(dB(oSINR))
+            gSINR_lk[k_idx, l_idx] = np.real(dB(oSINR / (iSINR + epsilon)))
 
     # TODO:
     #       Export measures
-    #       Fix missing 'gen_palette'
 
-    input('Stop here')
+    exp_iSINR_lk = ['freq, win, val']
+    exp_oSINR_lk =['freq, win, val']
+    exp_gSINR_lk =['freq, win, val']
+    exp_iSINR_k =['freq, val']
+    exp_oSINR_k =['freq, val']
+    exp_gSINR_k =['freq, val']
+
+    for k_idx in range(n_bins_star):
+        exp_iSINR_k.append(','.join([str(sym_freqs[k_idx]), str(fix_decimals(iSINR_k[k_idx], dec=4))]))
+        exp_oSINR_k.append(','.join([str(sym_freqs[k_idx]), str(fix_decimals(oSINR_k[k_idx], dec=4))]))
+        exp_gSINR_k.append(','.join([str(sym_freqs[k_idx]), str(fix_decimals(gSINR_k[k_idx], dec=4))]))
+
+        for l_idx in range(n_win_F):
+            exp_iSINR_lk.append(','.join([str(sym_freqs[k_idx]),str(l_idx), str(fix_decimals(iSINR_lk[k_idx, l_idx], dec=4))]))
+            exp_oSINR_lk.append(','.join([str(sym_freqs[k_idx]),str(l_idx), str(fix_decimals(oSINR_lk[k_idx, l_idx], dec=4))]))
+            exp_gSINR_lk.append(','.join([str(sym_freqs[k_idx]),str(l_idx), str(fix_decimals(gSINR_lk[k_idx, l_idx], dec=4))]))
+
+    exp_iSINR_k = '\n'.join(exp_iSINR_k)
+    exp_oSINR_k = '\n'.join(exp_oSINR_k)
+    exp_gSINR_k = '\n'.join(exp_gSINR_k)
+    exp_iSINR_lk = '\n'.join(exp_iSINR_lk)
+    exp_oSINR_lk = '\n'.join(exp_oSINR_lk)
+    exp_gSINR_lk = '\n'.join(exp_gSINR_lk)
+
+    freq_mode = freq_mode.upper()
+    filename = '_' + freq_mode
+    folder = 'io_output/' + freq_mode + '/'
+    if not os.path.isdir('io_output/'):
+        os.mkdir('io_output/')
+    if not os.path.isdir(folder):
+        os.mkdir(folder)
+    with open(folder + 'gain_SINR_k' + filename + '.csv', 'w') as f:
+        f.write(exp_gSINR_k)
+        f.close()
+    with open(folder + 'gain_SINR_lk' + filename + '.csv', 'w') as f:
+        f.write(exp_gSINR_lk)
+        f.close()
+
+    gen_aux_data(mesh_cols=n_bins_star, mesh_rows=n_win_F, n_tests=1)
 
 
-    F_lk = np.zeros([freqs_t.size, Arr_PA.M], dtype=complex)
-    Zk_true = np.zeros([freqs_t_true.size, Arr_PA.M], dtype=complex)
-    for k_idx, k in enumerate(freqs_t):
-        # # ---------------
-        # # Variable reorganization
-        Hk = Hlk[k_idx, :, :]
-        Gk = Glk[k_idx, :, :]
-        dk_x = Hk[0, :]
-        Hk_ = Hk[1:, :]
+def gen_aux_data(mesh_cols, mesh_rows, n_tests):
+    # data_defs
+    mesh_cols = r'\def\meshcols{{{}}}'.format(mesh_cols)
+    mesh_rows = r'\def\meshrows{{{}}}'.format(mesh_rows)
+    mesh = [mesh_cols, mesh_rows]
+    colors = gp.gen_palette(80, 60, n_tests, 345) + gp.gen_palette(0, 60, 1, 0)
 
-        # # ---------------
-        # # Undesired signal correlation matrix
-        Corr_w = np.zeros([Arr_PA.M, Arr_PA.M], dtype=complex)
-        for idx_l in range(Hk_.shape[0]):
-            pH_l = Hk_[idx_l, :].reshape(-1, 1)
-            Corr_w += (pH_l @ he(pH_l)) * var_x
-        for idx_l in range(Gk.shape[0]):
-            pG_l = Gk[idx_l, :]
-            Corr_w += (pG_l @ he(pG_l)) * var_v
-        Corr_w += np.identity(Arr_PA.M) * var_r
-        #        print(Corr_w)
-        #        print(det(Corr_w))
-        #        input()
-        iCorr_w = inv(Corr_w)
+    data_defs = mesh + colors
+    data_defs = '\n'.join(data_defs)
 
-        match tf_mode:
-            case 'mtf':
-                pG_0 = Gk[0, :].reshape(-1, 1)
-                Corr_w_tf = (pG_0 @ he(pG_0)) * var_v + np.identity(Arr_PA.M) * var_r
-                iCorr_w_tf = inv(Corr_w_tf)
-            case 'ctf':
-                Corr_w_tf = Corr_w
-                iCorr_w_tf = iCorr_w
-        # # ---------------
-        # # Beamforming
-        zk_mvdr = (iCorr_w_tf @ dk_x) / (he(dk_x) @ iCorr_w_tf @ dk_x)
-        F_lk[k_idx, :] = zk_mvdr
-
-    for m in range(Arr_PA.M):
-        # # ---------------
-        # # Frequency-transform correction
-        zk_m = F_lk[:, m]
-        if freq_mode == 'stft':
-            zk_m_true = zk_m
-        else:
-            zn_m = irft(zk_m)
-            zk_m_true = fft(zn_m)[:freqs_t_true.size]
-        Zk_true[:, m] = zk_m_true
-    Hlk = Hlk_true
-    Glk = Glk_true
-    F_lk = Zk_true
-    freqs_t = freqs_t_true
-
-    for k_idx, k in enumerate(freqs_t):
-
-        # # ---------------
-        # # Variable reorganization
-        Hk = Hlk[k_idx, :, :]
-        Gk = Glk[k_idx, :, :]
-        dk_x = Hk[0, :]
-        Hk_ = Hk[1:, :]
-        zk_mvdr = F_lk[k_idx, :]
-
-        # # ---------------
-        # # Undesired signal correlation matrix
-        Corr_w = np.zeros([Arr_PA.M, Arr_PA.M], dtype=complex)
-        for idx_l in range(Hk_.shape[0]):
-            pH_l = Hk_[idx_l, :].reshape(-1, 1)
-            Corr_w += (pH_l @ he(pH_l)) * var_x
-        for idx_l in range(Gk.shape[0]):
-            pG_l = Gk[idx_l, :]
-            Corr_w += (pG_l @ he(pG_l)) * var_v
-        Corr_w += np.identity(Arr_PA.M) * var_r
-        iCorr_w = inv(Corr_w)
-
-        # # ---------------
-        # # Metrics
-        for a_idx, angle in enumerate(sym_angles):
-            d_ta = Tlk_true[k_idx, 0, a_idx, :]
-            bpt = np.abs(calcbeam(zk_mvdr, d_ta))
-            Arr_PA.beam[k_idx, a_idx] = bpt
-
-        Arr_PA.wng[k_idx] = calc_wng(zk_mvdr, dk_x)
-        Arr_PA.gain[k_idx] = calc_gain(zk_mvdr, dk_x, Corr_w, Corr_w[0, 0])
-        Arr_PA.gain_expec[k_idx] = np.real(he(dk_x) @ (iCorr_w * Corr_w[0, 0]) @ dk_x)
-        Arr_PA.df[k_idx] = calcdf(Arr_PA, zk_mvdr, dk_x, k, c)
-
-        # # ---------------
-        # # Result presentation
-        freqs = sym_freqs.reshape(-1, ) / 1000
-        angles = sym_angles.reshape(-1, )
-
-        beam = dB(vect(Arr_PA.beam).reshape(-1, ))
-        wng = dB(Arr_PA.wng.reshape(-1, ))
-        gain = dB(Arr_PA.gain.reshape(-1, ))
-        gain_expec = dB(Arr_PA.gain_expec.reshape(-1, ))
-        df = dB(Arr_PA.df.reshape(-1, ))
-
-    match res_mode:
-        case 'plot:gain':
-            plt.plot(freqs, gain)
-            plt.plot(freqs, gain_expec)
-            plt.show()
-        case _:
-            params = [freqs, angles, wng, df, beam, gain]
-            params = fix_decimals(params)
-            params = list(params)
-            for f_idx, param in enumerate(params):
-                params[f_idx] = list(param)
-            freqs, angles, wng, df, beam, gain = tuple(params)
-
-            wng_ = list(zip(freqs, wng))
-            df_ = list(zip(freqs, df))
-            gain_ = list(zip(freqs, gain))
-            b_freqs = freqs * len(angles)
-            b_angles = []
-            for angle_rad in angles:
-                b_angles += [angle_rad] * len(freqs)
-            beam_ = list(zip(b_freqs, b_angles, beam))
-
-            wng_ = 'freq,val\n' + '\n'.join([','.join([str(val) for val in item]) for item in wng_])
-            df_ = 'freq,val\n' + '\n'.join([','.join([str(val) for val in item]) for item in df_])
-            beam_ = 'freq,ang,val\n' + '\n'.join([','.join([str(val) for val in item]) for item in beam_])
-            gain_ = 'freq,val\n' + '\n'.join([','.join([str(val) for val in item]) for item in gain_])
-
-            tf_mode = tf_mode.upper()
-            freq_mode = freq_mode.upper()
-            filename = '_' + tf_mode + '_' + freq_mode
-            folder = 'io_output/' + tf_mode + '_' + freq_mode + '/'
-            if not os.path.isdir('io_output/'):
-                os.mkdir('io_output/')
-            if not os.path.isdir(folder):
-                os.mkdir(folder)
-            with open(folder + 'wng' + filename + '.csv', 'w') as f:
-                f.write(wng_)
-                f.close()
-            with open(folder + 'df' + filename + '.csv', 'w') as f:
-                f.write(df_)
-                f.close()
-            with open(folder + 'gain' + filename + '.csv', 'w') as f:
-                f.write(gain_)
-                f.close()
-            with open(folder + 'beam' + filename + '.csv', 'w') as f:
-                f.write(beam_)
-                f.close()
-
-            beam_min = -20
-            beam_max = 0
-
-            # data_defs
-            beam_min = r'\def\ymin{{{}}}'.format(beam_min)
-            beam_max = r'\def\ymax{{{}}}'.format(beam_max)
-            meshcols = r'\def\meshcols{{{}}}'.format(sym_freqs.shape[0])
-            meshrows = r'\def\meshrows{{{}}}'.format(len(sym_angles))
-            colors = gen_palette(80, 60, 6, 345)
-            lightK = r'\definecolor{LightG}{HTML}{3F3F3F}'
-
-            data_defs = [beam_min, beam_max, meshcols, meshrows] + colors + [lightK]
-            data_defs = '\n'.join(data_defs)
-
-            with open('io_output/' + 'data_defs.tex', 'w') as f:
-                f.write(data_defs)
-                f.close()
+    with open('io_output/' + 'data_defs.tex', 'w') as f:
+        f.write(data_defs)
+        f.close()
 
 
 def main():
-    combinations = {
-        'A': Params(freq_mode='stft',
-                    tf_mode='ctf'),
-        'B': Params(freq_mode='stft',
-                    tf_mode='mtf'),
-        'C': Params(freq_mode='ssbt',
-                    tf_mode='ctf'),
-        'D': Params(freq_mode='ssbt',
-                    tf_mode='mtf'),
-    }
+    freq_modes = ['stft',
+                  'ssbt']
 
-    for comb in combinations.keys():
-        modes = combinations[comb]
-        simulation(freq_mode=modes.freq_mode,
-                   tf_mode=modes.tf_mode,
+    for freq_mode in freq_modes:
+        simulation(freq_mode=freq_mode,
                    res_mode='save')
 
 

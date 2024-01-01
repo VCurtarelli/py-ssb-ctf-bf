@@ -1,16 +1,5 @@
 import numpy as np
-import scipy
-from numpy import pi
-import matplotlib.pyplot as plt
-import scipy.special as spsp
-from scipy.optimize import fsolve, root
-from scipy.signal import convolve2d as c2d
-import scipy.integrate as itg
-from numpy.linalg import inv
-from colorsys import hsv_to_rgb
-from scipy.fft import fft, ifft
-from scipy.signal import stft, istft
-from f_ssbt import ssbt, issbt, rft, irft
+from numpy import pi as PI
 
 
 def err(mat1, mat2, dec=2):
@@ -86,7 +75,7 @@ def cart2pol(A):
     # Converts cartesian to polar
     Ar = np.abs(A)
     Ap = np.angle(A)
-    Ap[Ap < 0] = 2 * pi + Ap[Ap < 0]
+    Ap[Ap < 0] = 2 * PI + Ap[Ap < 0]
 
     return Ar, Ap
 
@@ -106,7 +95,7 @@ def dB(A):
         B = [A]
     C = []
     for b in B:
-        c = 10 * np.log10(np.abs(b) + 1e-6)
+        c = 10 * np.log10(np.abs(b) + 1e-12)
         C.append(c)
     if type(A) in [list, tuple, set]:
         C = tuple(C)

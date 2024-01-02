@@ -1,6 +1,6 @@
 import numpy as np
 from numpy import pi as PI
-
+import scipy.signal as sps
 
 def err(mat1, mat2, dec=2):
     mat_err = mat1 - mat2
@@ -95,7 +95,7 @@ def dB(A):
         B = [A]
     C = []
     for b in B:
-        c = 10 * np.log10(np.abs(b) + 1e-12)
+        c = 10 * np.log10(np.abs(b) + 1e-15)
         C.append(c)
     if type(A) in [list, tuple, set]:
         C = tuple(C)
@@ -134,3 +134,11 @@ class Params:
 
     def add(self, **kwds):
         self.__dict__.update(kwds)
+
+
+def resample(old_signal, old_rate, new_rate):
+    old_length = old_signal.size
+    new_length = int(np.ceil(old_length * new_rate / old_rate))
+    new_signal = sps.resample(old_signal, new_length)
+
+    return new_signal

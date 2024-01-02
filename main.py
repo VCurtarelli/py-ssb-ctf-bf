@@ -11,18 +11,20 @@ from scipy.signal import stft, istft
 from scipy.fft import fft, ifft
 from f_ssbt import ssbt, issbt, rft, irft
 import gen_palette as gp
+import soundfile as sf
+import matplotlib.pyplot as plt
 
 np.set_printoptions(suppress=True, precision=4)
 
 
-def simulation(freq_mode: str = 'stft', res_mode='save'):
+def simulation(freq_mode: str = 'stft', sig_mode='random'):
     """
     Parameters
     ----------
     freq_mode: str
         Which to use, STFT or SSBT. Defaults to STFT.
-    res_mode: str
-        Which results to make, 'plot:name_of_metric' or 'save-to-file'. Defaults to save-to-file ('save').
+    sig_mode: str
+        Which signals to use, 'random' or 'load'. Defaults to 'random'.
     Returns
     -------
 
@@ -84,7 +86,7 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
     fs = variables['fs'].item()
     n_sensors = variables['n_sensors'].item()
     len_rir = variables['n'].item()
-    n_per_seg = 32
+    n_per_seg = 64
 
     global n_bins, F_lk_star, geft
     match freq_mode:
@@ -99,13 +101,13 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
     n_bins_star = (1 + n_per_seg)//2 + 1
     n_win_rir = int(np.ceil(2*len_rir/n_per_seg + 1))
     sym_freqs = np.linspace(0, fs, n_per_seg + 1)[:n_bins_star]
-    win_p_fil = 100
-    dist_fil = -1  # INFO: If "win_p_fil = -1", uses whole signal
+    dist_fil = 25
+    win_p_fil = 250  # INFO: If "win_p_fil = -1", uses whole signal
     m_ref = 0
     array = Array((1, n_sensors), 'Array')
     array.init_metrics(sym_freqs.size)  # Initializes metrics
 
-    epsilon = 1e-12
+    epsilon = 1e-15
     SIR_in = 0
     SNR_in = 30
 
@@ -120,23 +122,31 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
     #       x_n         : Desired signal at source {vector} [scalar]
     #       v_n         : Undesired signal at source {vector} [scalar]
     #       r_n         : Noise signal, for each sensor {vector} [scalar]
-    #       var_x       : Variance of desired signal (at source) [scalar]
-    #       var_v       : Variance of undesired signal (at source) [scalar]
-    #       var_r       : Variance of noise signal [scalar]
     #       len_x       : Number of samples of x_n [scalar]
 
     h_n = np.loadtxt('io_input/rir_dx_.csv', delimiter=',')
-
-    len_x = 100000
-    x_n = np.random.rand(len_x)         # TODO: load desired signal (speech?)
-    var_x = 1
-
     g_n = np.loadtxt('io_input/rir_v2_.csv', delimiter=',')
-    v_n = np.random.rand(2*len_x)       # TODO: load undesired signal (babble?)
-    var_v = 1
 
-    r_n = np.random.rand(2*len_x, n_sensors)          # TODO: load/gen noise signal (white?)
-    var_r = 1e-4
+    match sig_mode:
+        case 'load':
+            x_n, samplerate = sf.read('io_input/audio_speech_female.flac')
+            x_n = resample(x_n, samplerate, fs)
+            v_n, samplerate = sf.read('io_input/audio_music_abba.flac')
+            v_n = resample(v_n, samplerate, fs)
+            r_n, samplerate = sf.read('io_input/audio_noise_wgn.flac')
+            r_n = resample(r_n, samplerate, fs).reshape(-1, 1)
+            nr_n = []
+            for m in range(n_sensors):
+                nr_n.append(np.roll(r_n, int(m/n_sensors * r_n.size)))
+            r_n = np.hstack(nr_n)
+        case 'random', _:
+            len_x = 100000
+            x_n = np.random.rand(len_x)         # TODO: load desired signal (speech?)
+
+            g_n = np.loadtxt('io_input/rir_v2_.csv', delimiter=',')
+            v_n = np.random.rand(2*len_x)       # TODO: load undesired signal (babble?)
+
+            r_n = np.random.rand(2*len_x, n_sensors)          # TODO: load/gen noise signal (white?)
 
     # INFO: Array-fixing, so that the desired signal RIR's max. value is at the start of a FT window
     idx_max_h_n = np.where(h_n[m_ref, :] == np.amax(h_n[m_ref, :]))[0][0]
@@ -303,8 +313,6 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
         dist_fil = n_win_Y
         win_p_fil = n_win_Y
 
-    dist_fil = 100
-    win_p_fil = 1000
     F_lk = np.empty((n_bins, int(np.ceil(n_win_Y / dist_fil)), n_sensors), dtype=complex)
     n_win_F = F_lk.shape[1]
     for k_idx in range(n_bins):
@@ -319,7 +327,7 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
                 for idx_j in range(idx_i, n_sensors):
                     Corr_Y[idx_i, idx_j] = Y[:, idx_i] @ he(Y[:, idx_j])
                     Corr_Y[idx_j, idx_i] = np.conj(Corr_Y[idx_i, idx_j])
-            F_lk[k_idx, l_idx, :] = Corr_Y @ tr(dx) / (np.conj(dx) @ Corr_Y @ tr(dx) + epsilon)
+            F_lk[k_idx, l_idx, :] = (Corr_Y @ tr(dx) + epsilon) / (np.conj(dx) @ Corr_Y @ tr(dx) + epsilon)
 
     # Info: Converting filter from GEFT to STFT
     match freq_mode:
@@ -354,6 +362,7 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
             Rf_lk_star[k_idx, l_idx] = (he(F) @ R).item()
             Wf_lk_star[k_idx, l_idx] = (he(F) @ W).item()
             Yf_lk_star[k_idx, l_idx] = (he(F) @ Y).item()
+
     """
         -----------
         - Metrics -
@@ -378,24 +387,6 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
     gSINR_k = np.empty((n_bins_star,), dtype=float)
 
     for k_idx in range(n_bins_star):
-        S = S_lk_star[k_idx, :].reshape(-1, 1)
-        W = W_lk_star[k_idx, :].reshape(-1, 1)
-
-        Sf = Sf_lk_star[k_idx, :].reshape(-1, 1)
-        Wf = Wf_lk_star[k_idx, :].reshape(-1, 1)
-
-        var_S = (he(S) @ S).item()
-        var_W = (he(W) @ W).item()
-
-        var_Sf = (he(Sf) @ Sf).item()
-        var_Wf = (he(Wf) @ Wf).item()
-
-        iSINR = var_S / (var_W + epsilon)
-        oSINR = var_Sf / (var_Wf + epsilon)
-        iSINR_k[k_idx] = np.real(dB(iSINR))
-        oSINR_k[k_idx] = np.real(dB(oSINR))
-        gSINR_k[k_idx] = np.real(dB(oSINR / (iSINR + epsilon)))
-
         for l_idx in range(n_win_F):
             idx_stt = max(0, (l_idx + 1) * dist_fil - n_win_Y)
             idx_end = min((l_idx + 1) * dist_fil, n_win_Y)
@@ -411,14 +402,28 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
             var_Sf = (he(Sf) @ Sf).item()
             var_Wf = (he(Wf) @ Wf).item()
 
-            iSINR = var_S / (var_W + epsilon)
-            oSINR = var_Sf / (var_Wf + epsilon)
-            iSINR_lk[k_idx, l_idx] = np.real(dB(iSINR))
-            oSINR_lk[k_idx, l_idx] = np.real(dB(oSINR))
-            gSINR_lk[k_idx, l_idx] = np.real(dB(oSINR / (iSINR + epsilon)))
+            iSINR = (var_S + epsilon) / (var_W + epsilon)
+            oSINR = (var_Sf + epsilon) / (var_Wf + epsilon)
+            iSINR_lk[k_idx, l_idx] = np.real(iSINR)
+            oSINR_lk[k_idx, l_idx] = np.real(oSINR)
+            gSINR_lk[k_idx, l_idx] = np.real((oSINR + epsilon) / (iSINR + epsilon))
 
-    # TODO:
-    #       Export measures
+    iSINR_k = np.mean(iSINR_lk, 1)
+    oSINR_k = np.mean(oSINR_lk, 1)
+    gSINR_k = np.mean(gSINR_lk, 1)
+
+    iSINR_lk = dB(iSINR_lk)
+    oSINR_lk = dB(oSINR_lk)
+    gSINR_lk = dB(gSINR_lk)
+    iSINR_k = dB(iSINR_k)
+    oSINR_k = dB(oSINR_k)
+    gSINR_k = dB(gSINR_k)
+
+    """
+        -------------------
+        - Export measures -
+        -------------------
+    """
 
     exp_iSINR_lk = ['freq, win, val']
     exp_oSINR_lk =['freq, win, val']
@@ -427,15 +432,17 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
     exp_oSINR_k =['freq, val']
     exp_gSINR_k =['freq, val']
 
+    sym_freqs = sym_freqs/1000
     for k_idx in range(n_bins_star):
-        exp_iSINR_k.append(','.join([str(sym_freqs[k_idx]), str(fix_decimals(iSINR_k[k_idx], dec=4))]))
-        exp_oSINR_k.append(','.join([str(sym_freqs[k_idx]), str(fix_decimals(oSINR_k[k_idx], dec=4))]))
-        exp_gSINR_k.append(','.join([str(sym_freqs[k_idx]), str(fix_decimals(gSINR_k[k_idx], dec=4))]))
+        exp_iSINR_k.append(','.join([str(sym_freqs[k_idx]), str(iSINR_k[k_idx])]))
+        exp_oSINR_k.append(','.join([str(sym_freqs[k_idx]), str(oSINR_k[k_idx])]))
+        exp_gSINR_k.append(','.join([str(sym_freqs[k_idx]), str(gSINR_k[k_idx])]))
 
         for l_idx in range(n_win_F):
-            exp_iSINR_lk.append(','.join([str(sym_freqs[k_idx]),str(l_idx), str(fix_decimals(iSINR_lk[k_idx, l_idx], dec=4))]))
-            exp_oSINR_lk.append(','.join([str(sym_freqs[k_idx]),str(l_idx), str(fix_decimals(oSINR_lk[k_idx, l_idx], dec=4))]))
-            exp_gSINR_lk.append(','.join([str(sym_freqs[k_idx]),str(l_idx), str(fix_decimals(gSINR_lk[k_idx, l_idx], dec=4))]))
+            t = l_idx * dist_fil * n_bins_star / fs
+            exp_iSINR_lk.append(','.join([str(sym_freqs[k_idx]), str(t), str(iSINR_lk[k_idx, l_idx])]))
+            exp_oSINR_lk.append(','.join([str(sym_freqs[k_idx]), str(t), str(oSINR_lk[k_idx, l_idx])]))
+            exp_gSINR_lk.append(','.join([str(sym_freqs[k_idx]), str(t), str(gSINR_lk[k_idx, l_idx])]))
 
     exp_iSINR_k = '\n'.join(exp_iSINR_k)
     exp_oSINR_k = '\n'.join(exp_oSINR_k)
@@ -458,22 +465,25 @@ def simulation(freq_mode: str = 'stft', res_mode='save'):
         f.write(exp_gSINR_lk)
         f.close()
 
-    gen_aux_data(mesh_cols=n_bins_star, mesh_rows=n_win_F, n_tests=1)
+    t_min = 0
+    t_max = n_win_Y * n_bins_star / fs
 
+    mesh_cols = r'\def\meshcols{{{}}}'.format(n_win_F)
+    mesh_rows = r'\def\meshrows{{{}}}'.format(n_bins_star)
+    t_min = r'\def\tmin{{{}}}'.format(t_min)
+    t_max = r'\def\tmax{{{}}}'.format(t_max)
+    data = [mesh_cols, mesh_rows, t_min, t_max]
+    colors = gp.gen_palette(80, 60, ['stft', 'ssbt'], 345)
 
-def gen_aux_data(mesh_cols, mesh_rows, n_tests):
-    # data_defs
-    mesh_cols = r'\def\meshcols{{{}}}'.format(mesh_cols)
-    mesh_rows = r'\def\meshrows{{{}}}'.format(mesh_rows)
-    mesh = [mesh_cols, mesh_rows]
-    colors = gp.gen_palette(80, 60, n_tests, 345) + gp.gen_palette(0, 60, 1, 0)
-
-    data_defs = mesh + colors
+    data_defs = data + colors
     data_defs = '\n'.join(data_defs)
 
-    with open('io_output/' + 'data_defs.tex', 'w') as f:
+    with open('io_output/' + 'aux_data.tex', 'w') as f:
         f.write(data_defs)
         f.close()
+
+    plt.imshow(gSINR_lk, interpolation='bicubic')
+    plt.show()
 
 
 def main():
@@ -482,7 +492,7 @@ def main():
 
     for freq_mode in freq_modes:
         simulation(freq_mode=freq_mode,
-                   res_mode='save')
+                   sig_mode='load')
 
 
 if __name__ == '__main__':

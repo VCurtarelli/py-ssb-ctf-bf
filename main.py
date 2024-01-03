@@ -25,6 +25,7 @@ def sim_parser(comb):
 
 
 def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
+    print('Stt:', freq_mode.upper(), n_per_seg)
     """
     Parameters
     ----------
@@ -41,10 +42,11 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
     # Info: Abbreviations
     #       RIR         : Room Impulse Response
+    #       RFR         : Room Frequency Response
     #       SIR         : Signal-to-Interference Ratio
     #       SNR         : Signal-to-Noise Ratio
     #       TF          : Transfer Function
-    #       RTF         : Relative Transfer Function
+    #       RFR         : Relative Transfer Function
     #       FT          : Frequency Transform
     #       FFT         : Fast Fourier Transform
     #       STFT        : Short-Time Fourier Transform
@@ -52,13 +54,11 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
     #       SSBT        : Single-SideBand Transform
     #       GEFT        : GEneric Frequency Transform
 
-
     """
         ------------------
         - Pre-processing -
         ------------------
     """
-
     freq_mode = freq_mode.lower()
     if freq_mode not in ['ssbt', 'stft']:
         raise SyntaxError('Invalid frequency mode.')
@@ -68,7 +68,6 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
         - Constants -
         -------------
     """
-
     # Vars: Constants
     #       dx          : Distance between sensors [m]
     #       c           : Wave speed [m/s]
@@ -95,7 +94,7 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
     n_sensors = variables['n_sensors'].item()
     len_rir = variables['n'].item()
 
-    global n_bins, F_lk_star, geft, x_n, v_n, r_n
+    global n_bins, F_lk_star, geft
     match freq_mode:
         case 'ssbt':
             n_bins = n_per_seg
@@ -116,7 +115,7 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
     epsilon = 1e-15
     iSIR = 5
-    iSNR = 90
+    iSNR = 60
 
     """
         -------------------------
@@ -124,16 +123,17 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
         -------------------------
     """
     # Vars: Sources and signals (time)
-    #       h_n         : Desired signal's RIR, for each sensor {matrix} [scalar]
-    #       g_n         : Undesired signal's RIR, for each sensor {matrix} [scalar]
-    #       x_n         : Desired signal at source {vector} [scalar]
-    #       v_n         : Undesired signal at source {vector} [scalar]
+    #       h_n         : Speech signal's RIR, for each sensor {matrix} [scalar]
+    #       g_n         : Interfering signal's RIR, for each sensor {matrix} [scalar]
+    #       x_n         : Speech signal at source {vector} [scalar]
+    #       v_n         : Interfering signal at source {vector} [scalar]
     #       r_n         : Noise signal, for each sensor {vector} [scalar]
     #       len_x       : Number of samples of x_n [scalar]
 
     h_n = np.loadtxt('io_input/rir_dx_.csv', delimiter=',')
     g_n = np.loadtxt('io_input/rir_v2_.csv', delimiter=',')
 
+    global x_n, v_n, r_n
     match sig_mode:
         case 'load':
             x_n, samplerate = sf.read('io_input/audio_speech_male_r.flac')
@@ -159,6 +159,16 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
         - Relative-impulse responses -
         ------------------------------
     """
+    # Vars: Sources and signals (time)
+    #       H_f         : Speech signal's RFR, for each sensor {matrix} [scalar]
+    #       G_f         : Interfering signal's RFR, for each sensor {matrix} [scalar]
+    #       B_f         : Speech signal's relative RFR, for each sensor {matrix} [scalar]
+    #       C_f         : Interfering signal's relative RFR, for each sensor {matrix} [scalar]
+    #       b_n         : Speech signal's relative RIR, for each sensor {matrix} [scalar]
+    #       c_n         : Interfering signal's relative RIR, for each sensor {matrix} [scalar]
+    #       x1_n        : Ref-sensor's desired signal {vector} [scalar]
+    #       v1_n        : Ref-sensor's interfering signal {vector} [scalar]
+    #       l_des_win   : Window in which desired signal starts [scalar]
 
     H_f = np.empty_like(h_n, dtype=complex)
     G_f = np.empty_like(g_n, dtype=complex)
@@ -185,34 +195,33 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
     b_n = np.hstack([np.zeros([n_sensors, new_idx_max_b_n - idx_max_b_n]), b_n])
     c_n = np.hstack([np.zeros([n_sensors, new_idx_max_b_n - idx_max_b_n]), c_n])
 
-    l_des_window = new_idx_max_b_n // (n_per_seg // 2)
+    l_des_win = new_idx_max_b_n // (n_per_seg // 2)
 
     len_rir = b_n.shape[1]
     n_win_rir = int(np.ceil(2*len_rir/n_per_seg + 1))
-    n_win_R = int(np.ceil(2*r_n.shape[0]/n_per_seg + 1))
+    n_win_N = int(np.ceil(2*r_n.shape[0]/n_per_seg + 1))
 
     """
         -------------------------------
         - Time-Freq. domain variables -
         -------------------------------
     """
-
-    # Vars: Sources and signals (freq.)
-    #       B_lk        : Desired signal's relative RTF through GEFT, for each sensor {tensor} [scalar]
-    #       C_lk        : Undesired signal's relative RTF through GEFT, for each sensor {tensor} [scalar]
-    #       dx_lk       : Desired signal's relative RTF through GEFT for main window, for each sensor {tensor} [scalar]
-    #       X_lk        : Desired signal's FT through GEFT, for each sensor {tensor} [scalar]
-    #       V_lk        : Undesired signal's FT through GEFT, for each sensor {tensor} [scalar]
-    #       N_lk        : Noise signal's FT through GEFT, for each sensor {tensor} [scalar]
-    #       Y_lk        : Observed signal's FT through GEFT, for each sensor {tensor} [scalar]
-    #       n_win_X     : Number of windows of X_lk [scalar]
-    #       n_win_V     : Number of windows of V_lk [scalar]
+    # Vars: Input sources and signals (freq.)
+    #       B_lk        : Speech signal's GEFT, for each sensor {tensor} [scalar]
+    #       C_lk        : Interfering signal's GEFT, for each sensor {tensor} [scalar]
+    #       P_lk        : Undesired speech signal's GEFT, for each sensor {tensor} [scalar]
+    #       dx_lk       : Speech signal's GEFT for main window, for each sensor {tensor} [scalar]
+    #       dx_k        : Speech signal's GEFT for only main window, for each sensor {matrix} [scalar]
+    #       X1_lk       : Speech signal's GEFT, for each sensor {tensor} [scalar]
+    #       V1_lk       : Undesired signal's FT GEFT, for each sensor {tensor} [scalar]
+    #       N_lk        : Noise signal's GEFT, for each sensor {tensor} [scalar]
+    #       n_win_X1    : Number of windows of X_lk [scalar]
+    #       n_win_V1    : Number of windows of V_lk [scalar]
     #       n_win_N     : Number of windows of N_lk [scalar]
-    #       n_win_Y     : Number of windows of Y_lk [scalar]
 
     B_lk = np.empty((n_bins, n_win_rir, n_sensors), dtype=complex)
     C_lk = np.empty((n_bins, n_win_rir, n_sensors), dtype=complex)
-    N_lk = np.empty((n_bins, n_win_R, n_sensors), dtype=complex)
+    N_lk = np.empty((n_bins, n_win_N, n_sensors), dtype=complex)
     for idx in range(n_sensors):
         _, _, Bm_lk = geft(b_n[idx, :], fs, nperseg=n_per_seg)
         B_lk[:, :, idx] = Bm_lk
@@ -224,19 +233,26 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
         N_lk[:, :, idx] = Rm_lk
 
     P_lk = np.copy(B_lk)
-    P_lk[:, l_des_window, :] = 0
+    P_lk[:, l_des_win, :] = 0
     dx_lk = B_lk - P_lk
-    dx_k = B_lk[:, l_des_window, :]
+    dx_k = B_lk[:, l_des_win, :]
 
     _, _, X1_lk = geft(x1_n, fs, nperseg=n_per_seg)
     _, _, V1_lk = geft(v1_n, fs, nperseg=n_per_seg)
 
     n_win_X1 = X1_lk.shape[1]
     n_win_V1 = V1_lk.shape[1]
-    n_win_R = N_lk.shape[1]
-    n_win_Y = n_win_rir+n_win_X1-1
+    n_win_N = N_lk.shape[1]
+    
+    # Vars: Input sources and signals (freq.)
+    #       S_lk        : Speech signal's GEFT for each sensor {tensor} [scalar]
+    #       W_lk        : Observed signal's GEFT for each sensor {tensor} [scalar]
+    #       Y_lk        : Observed signal's GEFT for each sensor {tensor} [scalar]
+    #       n_win_Y     : Number of windows of Y_lk [scalar]
 
-    if max(n_win_V1, n_win_R) < n_win_X1 + n_win_rir-1:
+    n_win_Y = n_win_rir+n_win_X1-1
+    
+    if max(n_win_V1, n_win_N) < n_win_X1 + n_win_rir-1:
         raise AssertionError('Noise signals too short.')
 
     S_lk = np.empty((n_bins, n_win_rir+n_win_X1-1, n_sensors), dtype=complex)
@@ -265,19 +281,18 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
     # Vars:
     #   "_star" variables are the "true" variable, using STFT instead of GEFT
-    #       H_lk_star   : Desired signal's RTF through STFT, for each sensor {tensor} [scalar]
-    #       G_lk_star   : Undesired signal's RTF through STFT, for each sensor {tensor} [scalar]
-    #       B_lk_star   : Desired signal's relative RTF through STFT, for each sensor {tensor} [scalar]
-    #       C_lk_star   : Undesired signal's relative RTF through STFT, for each sensor {tensor} [scalar]
-    #       dx_lk_star  : Desired signal's relative RTF through STFT for main window, for each sensor {tensor} [scalar]
-    #       X_lk_star   : Desired signal's FT through STFT, for each sensor {tensor} [scalar]
-    #       V_lk_star   : Undesired signal's FT through STFT, for each sensor {tensor} [scalar]
-    #       N_lk_star   : Noise signal's FT through STFT, for each sensor {tensor} [scalar]
-    #       Y_lk_star   : Observed signal's FT through STFT, for each sensor {tensor} [scalar]
+    #       B_lk_star   : Speech signal's STFT, for each sensor {tensor} [scalar]
+    #       C_lk_star   : Interfering signal's STFT, for each sensor {tensor} [scalar]
+    #       P_lk_star   : Undesired speech signal's STFT, for each sensor {tensor} [scalar]
+    #       dx_lk_star  : Speech signal's STFT for main window, for each sensor {tensor} [scalar]
+    #       dx_k_star   : Speech signal's STFT for only main window, for each sensor {matrix} [scalar]
+    #       X1_lk_star  : Speech signal's STFT, for each sensor {tensor} [scalar]
+    #       V1_lk_star  : Undesired signal's FT STFT, for each sensor {tensor} [scalar]
+    #       N_lk_star   : Noise signal's STFT, for each sensor {tensor} [scalar]
 
     B_lk_star = np.empty((n_bins_star, n_win_rir, n_sensors), dtype=complex)
     C_lk_star = np.empty((n_bins_star, n_win_rir, n_sensors), dtype=complex)
-    N_lk_star = np.empty((n_bins_star, n_win_R, n_sensors), dtype=complex)
+    N_lk_star = np.empty((n_bins_star, n_win_N, n_sensors), dtype=complex)
     for idx in range(n_sensors):
         _, _, Bm_lk_star = stft(b_n[idx, :], fs, nperseg=n_per_seg)
         B_lk_star[:, :, idx] = Bm_lk_star
@@ -289,12 +304,17 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
         N_lk_star[:, :, idx] = Rm_lk_star
 
     P_lk_star = np.copy(B_lk_star)
-    P_lk_star[:, l_des_window, :] = 0
+    P_lk_star[:, l_des_win, :] = 0
     dx_lk_star = B_lk_star - P_lk_star
-    dx_k_star = B_lk_star[:, l_des_window, :]
+    dx_k_star = B_lk_star[:, l_des_win, :]
 
     _, _, X1_lk_star = stft(x1_n, fs, nperseg=n_per_seg)
     _, _, V1_lk_star = stft(v1_n, fs, nperseg=n_per_seg)
+    
+    # Vars: Input sources and signals (freq.)
+    #       S_lk_star   : Speech signal's STFT for each sensor {tensor} [scalar]
+    #       W_lk_star   : Observed signal's STFT for each sensor {tensor} [scalar]
+    #       Y_lk_star   : Observed signal's STFT for each sensor {tensor} [scalar]
 
     S_lk_star = np.empty((n_bins_star, n_win_rir+n_win_X1-1, n_sensors), dtype=complex)
     W_lk_star = np.empty((n_bins_star, n_win_rir+n_win_X1-1, n_sensors), dtype=complex)
@@ -328,14 +348,12 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
     # Vars: Sources and signals (freq.)
     #       F_lk        : Beamforming filter {tensor} [scalar]
-    #       F_lk_star   : Beamforming filter asserted to STFT domain {tensor} [scalar]
     #       n_win_F     : Number of windows of F_lk [scalar]
     #       Corr_Y      : Correlation matrix of Y_lk, for current window and bin {matrix} [scalar]
+    #       F_lk_star   : Beamforming filter asserted to STFT domain {tensor} [scalar]
     #       Sf_lk_star  : Filtered S_lk {matrix} [scalar]
-    #       If_lk_star  : Filtered I_lk {matrix} [scalar]
-    #       Rf_lk_star  : Filtered R_lk {matrix} [scalar]
     #       Wf_lk_star  : Filtered W_lk {matrix} [scalar]
-    #       Yf_lk_star  : Filtered Y_lk {matrix} [scalar] - Z_lk ≡ Yf_lk
+    #       Yf_lk_star  : Filtered Y_lk {matrix} [scalar]   - Z_lk ≡ Yf_lk
 
     if dist_fil == -1:
         dist_fil = n_win_Y
@@ -350,17 +368,17 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
             # INFO: Separating necessary windows of Y_lk, and calculating coherence matrix
             idx_stt = max(0, (l_idx+1)*dist_fil-win_p_fil)
             idx_end = min((l_idx+1)*dist_fil, n_win_Y)
-            Y = W_lk[k_idx, idx_stt:idx_end, :]
-            Corr_Y = np.empty([n_sensors, n_sensors], dtype=complex)
+            O = W_lk[k_idx, idx_stt:idx_end, :]
+            Corr_O = np.empty([n_sensors, n_sensors], dtype=complex)
             for idx_i in range(n_sensors):
                 for idx_j in range(idx_i, n_sensors):
-                    Yi = Y[:, idx_i].reshape(-1, 1)
-                    Yj = Y[:, idx_j].reshape(-1, 1)
-                    Corr_Y[idx_i, idx_j] = (he(Yi) @ Yj).item()
-                    Corr_Y[idx_j, idx_i] = np.conj(Corr_Y[idx_i, idx_j])
+                    Oi = O[:, idx_i].reshape(-1, 1)
+                    Oj = O[:, idx_j].reshape(-1, 1)
+                    Corr_O[idx_i, idx_j] = (he(Oi) @ Oj).item()
+                    Corr_O[idx_j, idx_i] = np.conj(Corr_O[idx_i, idx_j])
             try:
-                iCorr_Y = inv(Corr_Y)
-                F_lk[k_idx, l_idx, :] = ((iCorr_Y @ D) / (he(D) @ iCorr_Y @ D + epsilon)).reshape(n_sensors)
+                iCorr_O = inv(Corr_O)
+                F_lk[k_idx, l_idx, :] = ((iCorr_O @ D) / (he(D) @ iCorr_O @ D + epsilon)).reshape(n_sensors)
             except np.linalg.LinAlgError:
                 F_lk[k_idx, l_idx, :] = 0
 
@@ -430,10 +448,9 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
             D = dx_k_star[k_idx, :].reshape(-1, 1)
             DSDI_lk[k_idx, l_idx] = (np.abs(he(F)@D - 1)**2).item()
 
-    gSINR_k = np.mean(gSINR_lk, 1)
-
+    gSINR_k = dB(np.mean(gSINR_lk, 1))
     gSINR_lk = dB(gSINR_lk)
-    gSINR_k = dB(gSINR_k)
+    DSDI_k = np.mean(DSDI_lk, 1)
 
     """
         ---------------
@@ -444,10 +461,12 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
     exp_gSINR_lk =['freq, win, val']
     exp_gSINR_k =['freq, val']
     exp_DSDI_lk = ['freq, win, val']
+    exp_DSDI_k = ['freq, val']
 
     sym_freqs = sym_freqs/1000
     for k_idx in range(n_bins_star):
         exp_gSINR_k.append(','.join([str(sym_freqs[k_idx]), str(gSINR_k[k_idx])]))
+        exp_DSDI_k.append(','.join([str(sym_freqs[k_idx]), str(DSDI_k[k_idx])]))
 
         for l_idx in range(n_win_F):
             t = l_idx * dist_fil * n_bins_star / fs
@@ -457,6 +476,7 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
     exp_gSINR_k = '\n'.join(exp_gSINR_k)
     exp_gSINR_lk = '\n'.join(exp_gSINR_lk)
     exp_DSDI_lk = '\n'.join(exp_DSDI_lk)
+    exp_DSDI_k = '\n'.join(exp_DSDI_k)
 
     freq_mode = freq_mode.upper()
     filename = '_' + freq_mode + '_' + str(n_per_seg)
@@ -470,6 +490,9 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
         f.close()
     with open(folder + 'gain_SINR_lk' + filename + '.csv', 'w') as f:
         f.write(exp_gSINR_lk)
+        f.close()
+    with open(folder + 'DSDI_k' + filename + '.csv', 'w') as f:
+        f.write(exp_DSDI_k)
         f.close()
     with open(folder + 'DSDI_lk' + filename + '.csv', 'w') as f:
         f.write(exp_DSDI_lk)
@@ -486,6 +509,7 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
     _, x1_n = istft(X1_lk_star, fs)
     x1_n = 0.9 * x1_n/np.amax(x1_n)
     wavfile.write('io_output/audios/x1_unfiltered.wav', fs, x1_n)
+    
     """
         --------------------
         - Export aux files -
@@ -513,7 +537,7 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
         f.write(color_defs)
         f.close()
 
-    print(freq_mode, n_per_seg)
+    print('End:', freq_mode, n_per_seg)
     return None
 
 
@@ -528,13 +552,6 @@ def main():
     # idx = 0
     with Pool(ncombs) as p:
         p.map(sim_parser, combs)
-    # for freq_mode in freqmodes:
-    #     for nperseg in npersegs:
-    #         simulation(freq_mode=freq_mode,
-    #                    sig_mode='load',
-    #                    n_per_seg=nperseg)
-    #         idx += 1
-    #         print(str(idx) + '/' + str(ncombs))
 
 
 if __name__ == '__main__':

@@ -1,7 +1,0 @@
-*results/
-*.idea/
-*.run/
-*__pycache__/
-*Scripts/
-*Lib/
-*pyvenv.cfg

@@ -115,7 +115,7 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
     epsilon = 1e-15
     iSIR = 5
-    iSNR = 60
+    iSNR = 30
 
     """
         -------------------------
@@ -268,8 +268,8 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
             # INFO: Variance and SIR/SNR calculations
             var_S = np.var(S)
-            U = U / np.sqrt(var_S + epsilon)
             S = S / np.sqrt(var_S + epsilon)
+            U = U / np.sqrt(var_S + epsilon)
             I = I / np.sqrt(np.var(I) + epsilon) / np.sqrt(10 ** (iSIR / 10))
             R = R / np.sqrt(np.var(R) + epsilon) / np.sqrt(10 ** (iSNR / 10))
             W = U + I + R
@@ -368,7 +368,7 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
             # INFO: Separating necessary windows of Y_lk, and calculating coherence matrix
             idx_stt = max(0, (l_idx+1)*dist_fil-win_p_fil)
             idx_end = min((l_idx+1)*dist_fil, n_win_Y)
-            O = W_lk[k_idx, idx_stt:idx_end, :]
+            O = Y_lk[k_idx, idx_stt:idx_end, :]
             Corr_O = np.empty([n_sensors, n_sensors], dtype=complex)
             for idx_i in range(n_sensors):
                 for idx_j in range(idx_i, n_sensors):
@@ -426,19 +426,19 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
     for k_idx in range(n_bins_star):
         for l_idx in range(n_win_F):
-            idx_stt = max(0, (l_idx + 1) * dist_fil - n_win_Y)
-            idx_end = min((l_idx + 1) * dist_fil, n_win_Y)
+            idx_stt = max(0, (l_idx+1)*dist_fil-win_p_fil)
+            idx_end = min((l_idx+1)*dist_fil, n_win_Y)
             S = S_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
             W = W_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
-
+            
             Sf = Sf_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
             Wf = Wf_lk_star[k_idx, idx_stt:idx_end].reshape(-1, 1)
 
-            var_S = (he(S) @ S).item()
-            var_W = (he(W) @ W).item()
+            var_S = np.var(S)
+            var_W = np.var(W)
 
-            var_Sf = (he(Sf) @ Sf).item()
-            var_Wf = (he(Wf) @ Wf).item()
+            var_Sf = np.var(Sf)
+            var_Wf = np.var(Wf)
 
             iSINR = (var_S + epsilon) / (var_W + epsilon)
             oSINR = (var_Sf + epsilon) / (var_Wf + epsilon)
@@ -542,8 +542,8 @@ def simulation(freq_mode: str = 'stft', sig_mode='random', n_per_seg=32):
 
 
 def main():
-    freqmodes = ['stft',
-                 'ssbt']
+    freqmodes = ['ssbt',
+                 'stft']
 
     npersegs = [32, 64, 128]
 

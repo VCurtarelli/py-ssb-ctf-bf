@@ -112,7 +112,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     array = Array((1, n_sensors), 'Array')
     array.init_metrics(sym_freqs.size)  # Initializes metrics
     
-    epsilon = 1e-24
+    epsilon = 1e-12
     iSIR = 5
     iSNR = 30
     
@@ -360,6 +360,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     
     F_lk = np.empty((n_bins, int(np.ceil(n_win_Y / dist_fil)), n_sensors), dtype=complex)
     n_win_F = F_lk.shape[1]
+    alpha = 0.2
     for k_idx in range(n_bins):
         D = dx_k[k_idx, :]
         D = D.reshape(-1, 1)
@@ -386,43 +387,58 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
                 case 'ssbt-true':
                     if k_idx >= n_bins_star:
                         continue
-                    o1 = Y_lk[k_idx, idx_stt:idx_end, :]
-                    if k_idx == 0:
-                        o2 = o1
+                    sig = W_lk
+                    o1 = sig[k_idx, idx_stt:idx_end, :]
+                    if k_idx == 0 or (k_idx == n_bins_star and n_bins/2 == n_bins//2):
+                        # Info: Breaks if k=0 or k=K/2 with K even, so this shall be considered.
+                        Corr_O = np.empty((n_sensors, n_sensors), dtype=float)
+                        for idx_i in range(n_sensors):
+                            for idx_j in range(n_sensors):
+                                Oi = o1[:, idx_i].reshape(-1, 1)
+                                Oj = o1[:, idx_j].reshape(-1, 1)
+                                Corr_O[idx_i, idx_j] = np.real(tr(Oi) @ Oj).item()
+                                Corr_O[idx_j, idx_i] = Corr_O[idx_i, idx_j]
+                                
+                        Dx = (dx_k_star[k_idx, :]).reshape(-1, 1)
+                        Q = np.hstack([np.real(Dx), np.imag(Dx)])
+                        try:
+                            iCorr_O = inv(Corr_O + np.eye(n_sensors)*epsilon)
+                            id = np.array([[1], [0]])
+                            Fm_lk = iCorr_O @ Q @ inv(tr(Q) @ iCorr_O @ Q)
+                            Fm_lk = Fm_lk @ id
+                        except np.linalg.LinAlgError:
+                            Fm_lk = np.zeros((n_sensors, 1))
+                        F_lk[k_idx, l_idx, :] = Fm_lk.reshape(n_sensors)
                     else:
-                        o2 = Y_lk[n_bins-k_idx, idx_stt:idx_end, :]
-                    Corr_o1 = np.empty([n_sensors, n_sensors], dtype=float)
-                    Corr_o2 = np.empty([n_sensors, n_sensors], dtype=float)
-                    for idx_i in range(n_sensors):
-                        for idx_j in range(n_sensors):
-                            o1i = o1[:, idx_i].reshape(-1, 1)
-                            o1j = o1[:, idx_i].reshape(-1, 1)
-                            Corr_o1[idx_i, idx_j] = np.real(tr(o1i) @ o1j).item()
-                            Corr_o1[idx_j, idx_i] = Corr_o1[idx_i, idx_j]
-                            
-                            o2i = o2[:, idx_i].reshape(-1, 1)
-                            o2j = o2[:, idx_i].reshape(-1, 1)
-                            Corr_o2[idx_i, idx_j] = np.real(tr(o2i) @ o2j).item()
-                            Corr_o2[idx_j, idx_i] = Corr_o2[idx_i, idx_j]
-                    Corr_O = np.zeros([2*n_sensors, 2*n_sensors], dtype=float)
-                    Corr_O[:n_sensors, :n_sensors] = Corr_o1
-                    Corr_O[n_sensors:, n_sensors:] = Corr_o2
-                    
-                    arr_delay = np.zeros([n_sensors, 2*n_sensors], dtype=complex)
-                    for m in range(n_sensors):
-                        arr_delay[m, m] = np.exp(1j*3*PI/4) / np.sqrt(2)
-                        arr_delay[m, n_sensors+m] = np.exp(-1j*3*PI/4) / np.sqrt(2)
-                    Dx = he(arr_delay) @ ((dx_k_star[k_idx, :]).reshape(-1, 1))
-                    Q = np.hstack([np.real(Dx), np.imag(Dx)])
-                    try:
-                        iCorr_O = inv(Corr_O)
-                        id = np.array([[1],[0]])
-                        Fm_lk = iCorr_O @ Q @ inv(tr(Q) @ iCorr_O @ Q)
-                        Fm_lk = Fm_lk @ id
-                    except np.linalg.LinAlgError:
-                        Fm_lk = np.zeros((n_sensors, 1))
-                    F_lk[k_idx, l_idx, :] = Fm_lk[:n_sensors, 0].reshape(n_sensors)
-                    if k_idx != 0:
+                        o2 = sig[n_bins-k_idx, idx_stt:idx_end, :]
+                        Corr_O = np.empty((2*n_sensors, 2*n_sensors), dtype=float)
+                        for idx_i in range(2*n_sensors):
+                            for idx_j in range(2*n_sensors):
+                                if idx_i < n_sensors:
+                                    Oi = o1[:, idx_i].reshape(-1, 1)
+                                else:
+                                    Oi = o2[:, idx_i-n_sensors].reshape(-1, 1)
+                                if idx_j < n_sensors:
+                                    Oj = o1[:, idx_j].reshape(-1, 1)
+                                else:
+                                    Oj = o2[:, idx_j-n_sensors].reshape(-1, 1)
+                                Corr_O[idx_i, idx_j] = np.real(tr(Oi) @ Oj).item()
+                                Corr_O[idx_j, idx_i] = Corr_O[idx_i, idx_j]
+                        
+                        arr_delay = np.zeros([n_sensors, 2*n_sensors], dtype=complex)
+                        for m in range(n_sensors):
+                            arr_delay[m, m] = np.exp(1j*3*PI/4) / np.sqrt(2)
+                            arr_delay[m, n_sensors+m] = np.exp(-1j*3*PI/4) / np.sqrt(2)
+                        Dx = he(arr_delay) @ ((dx_k_star[k_idx, :]).reshape(-1, 1))
+                        Q = np.hstack([np.real(Dx), np.imag(Dx)])
+                        try:
+                            iCorr_O = inv(Corr_O)
+                            id = np.array([[1], [0]])
+                            Fm_lk = iCorr_O @ Q @ inv(tr(Q) @ iCorr_O @ Q)
+                            Fm_lk = Fm_lk @ id
+                        except np.linalg.LinAlgError:
+                            Fm_lk = np.zeros((2*n_sensors, 1))
+                        F_lk[k_idx, l_idx, :] = Fm_lk[:n_sensors, 0].reshape(n_sensors)
                         F_lk[n_bins-k_idx, l_idx, :] = Fm_lk[n_sensors:, 0].reshape(n_sensors)
     
     # Info: Assuring filter is in STFT
@@ -499,7 +515,6 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
             F = F_lk_star[k_idx, l_idx // dist_fil, :].reshape(-1, 1)
             D = dx_k_star[k_idx, :].reshape(-1, 1)
             DSDI_lk[k_idx, l_idx] = (np.abs(he(F) @ D - 1) ** 2).item()
-            # DSDI_lk[k_idx, l_idx] = np.real(he(F) @ D).item()
     
     gSINR_k = dB(np.mean(gSINR_lk, 1))
     gSINR_lk = dB(gSINR_lk)
@@ -517,7 +532,11 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     exp_DSDI_k = ['freq, val']
     
     sym_freqs = sym_freqs / 1000
-    for k_idx in range(n_bins_star):
+    
+    k_stt, k_end = 1, n_bins_star-1
+    # k_stt, k_end = 0, n_bins_star
+    
+    for k_idx in range(k_stt, k_end):
         exp_gSINR_k.append(','.join([str(sym_freqs[k_idx]), str(gSINR_k[k_idx])]))
         exp_DSDI_k.append(','.join([str(sym_freqs[k_idx]), str(DSDI_k[k_idx])]))
         
@@ -571,12 +590,17 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     
     t_min = 0
     t_max = n_win_Y * n_bins_star / fs
+    f_step = sym_freqs[1] - sym_freqs[0]
+    f_min = sym_freqs[k_stt] - f_step/2
+    f_max = sym_freqs[k_end-1] + f_step/2
     
     mesh_cols = r'\def\meshcols{{{}}}'.format(n_win_F)
-    mesh_rows = r'\def\meshrows{{{}}}'.format(n_bins_star)
+    mesh_rows = r'\def\meshrows{{{}}}'.format(n_bins_star-2)
     t_min = r'\def\tmin{{{}}}'.format(t_min)
     t_max = r'\def\tmax{{{}}}'.format(t_max)
-    data = [mesh_cols, mesh_rows, t_min, t_max]
+    f_min = r'\def\fmin{{{}}}'.format(f_min)
+    f_max = r'\def\fmax{{{}}}'.format(f_max)
+    data = [mesh_cols, mesh_rows, t_min, t_max, f_min, f_max]
     data_defs = '\n'.join(data)
     
     with open('io_output/' + 'aux_data_' + str(n_per_seg) + '.tex', 'w') as f:
@@ -596,8 +620,8 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
 
 def main():
     freqmodes = [
-        # 'ssbt',
-        # 'stft',
+        'ssbt',
+        'stft',
         'ssbt-true'
     ]
     

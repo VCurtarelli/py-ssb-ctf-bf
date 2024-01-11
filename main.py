@@ -175,8 +175,18 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
         H_f[m, :] = fft(h_n[m, :])
         G_f[m, :] = fft(g_n[m, :])
     
-    B_f = H_f / H_f[m_ref, :]
-    C_f = G_f / G_f[m_ref, :]
+    # Info: Correctly deconvolving the relative impulse repsonses
+    idx_max_h0_n = np.where(np.abs(h_n[m_ref, :]) == np.abs(np.amax(h_n[m_ref, :])))[0][0]
+    # h0_n = np.zeros_like(h_n[m_ref, :])
+    # h0_n[:-idx_max_h0_n] = h_n[m_ref, idx_max_h0_n:]
+    h0_n = np.roll(h_n[m_ref, :], -idx_max_h0_n)
+    H0_f = fft(h0_n)
+    
+    g0_n = np.roll(g_n[m_ref, :], -idx_max_h0_n)
+    G0_f = fft(g0_n)
+    
+    B_f = H_f / H0_f
+    C_f = G_f / G0_f
     
     b_n = np.empty_like(B_f, dtype=float)
     c_n = np.empty_like(C_f, dtype=float)
@@ -188,7 +198,6 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     v1_n = np.convolve(g_n[m_ref, :], v_n, mode='full')
     
     # INFO: Array-fixing, so that the desired signal RIR's max. value is at the start of a FT window
-    
     idx_max_b_n = np.where(np.abs(b_n[m_ref, :]) == np.abs(np.amax(b_n[m_ref, :])))[0][0]
     new_idx_max_b_n = int(np.ceil(idx_max_b_n / (n_per_seg // 2)) * (n_per_seg // 2))
     b_n = np.hstack([np.zeros([n_sensors, new_idx_max_b_n - idx_max_b_n]), b_n])
@@ -634,7 +643,7 @@ def main():
     combs = [(freqmode, nperseg) for freqmode in freqmodes for nperseg in npersegs]
     ncombs = min(len(combs), 6)
     # idx = 0
-    parallel = True
+    parallel = False
     if parallel:
         with Pool(ncombs) as p:
             p.map(sim_parser, combs)

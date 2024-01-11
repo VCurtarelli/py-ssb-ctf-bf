@@ -500,6 +500,8 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     
     gSINR_lk = np.empty((n_bins_star, n_win_F), dtype=float)
     DSDI_lk = np.empty((n_bins_star, n_win_F), dtype=float)
+    gSINR_k = np.empty((n_bins_star,), dtype=float)
+    DSDI_k = np.empty((n_bins_star,), dtype=float)
     
     for k_idx in range(n_bins_star):
         for l_idx in range(n_win_F):
@@ -525,9 +527,10 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
             D = dx_k_star[k_idx, :].reshape(-1, 1)
             DSDI_lk[k_idx, l_idx] = (np.abs(he(F) @ D - 1) ** 2).item()
     
-    gSINR_k = dB(np.mean(gSINR_lk, 1))
+    for k_idx in range(n_bins_star):
+        gSINR_k[k_idx] = dB(np.mean(reject_outliers(gSINR_lk[k_idx, :])))
+        DSDI_k[k_idx] = np.mean(reject_outliers(DSDI_lk[k_idx, :]))
     gSINR_lk = dB(gSINR_lk)
-    DSDI_k = np.mean(DSDI_lk, 1)
     
     """
         ---------------
@@ -641,9 +644,9 @@ def main():
     ]
     
     combs = [(freqmode, nperseg) for freqmode in freqmodes for nperseg in npersegs]
-    ncombs = min(len(combs), 6)
+    ncombs = min(len(combs), 4)
     # idx = 0
-    parallel = False
+    parallel = True
     if parallel:
         with Pool(ncombs) as p:
             p.map(sim_parser, combs)

@@ -369,7 +369,6 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     
     F_lk = np.empty((n_bins, int(np.ceil(n_win_Y / dist_fil)), n_sensors), dtype=complex)
     n_win_F = F_lk.shape[1]
-    alpha = 0.2
     for k_idx in range(n_bins):
         D = dx_k[k_idx, :]
         D = D.reshape(-1, 1)
@@ -377,9 +376,10 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
             # INFO: Separating necessary windows of Y_lk, and calculating coherence matrix
             idx_stt = max(0, (l_idx + 1) * dist_fil - win_p_fil)
             idx_end = min((l_idx + 1) * dist_fil, n_win_Y)
+            sig = Y_lk
             match freq_mode:
                 case 'stft' | 'ssbt':
-                    O = Y_lk[k_idx, idx_stt:idx_end, :]
+                    O = sig[k_idx, idx_stt:idx_end, :]
                     Corr_O = np.empty([n_sensors, n_sensors], dtype=complex)
                     for idx_i in range(n_sensors):
                         for idx_j in range(idx_i, n_sensors):
@@ -396,7 +396,6 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
                 case 'ssbt-true':
                     if k_idx >= n_bins_star:
                         continue
-                    sig = W_lk
                     o1 = sig[k_idx, idx_stt:idx_end, :]
                     if k_idx == 0 or (k_idx == n_bins_star and n_bins/2 == n_bins//2):
                         # Info: Breaks if k=0 or k=K/2 with K even, so this shall be considered.
@@ -645,7 +644,6 @@ def main():
     
     combs = [(freqmode, nperseg) for freqmode in freqmodes for nperseg in npersegs]
     ncombs = min(len(combs), 4)
-    # idx = 0
     parallel = True
     if parallel:
         with Pool(ncombs) as p:
@@ -653,7 +651,6 @@ def main():
     else:
         for comb in combs:
             sim_parser(comb)
-
 
 if __name__ == '__main__':
     main()

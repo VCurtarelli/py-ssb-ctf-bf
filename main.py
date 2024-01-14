@@ -369,6 +369,11 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     
     F_lk = np.empty((n_bins, int(np.ceil(n_win_Y / dist_fil)), n_sensors), dtype=complex)
     n_win_F = F_lk.shape[1]
+    arr_delay = np.zeros([n_sensors, 2 * n_sensors], dtype = complex)
+    for m in range(n_sensors):
+        arr_delay[m, m] = np.exp(1j * 3 * PI / 4) / np.sqrt(2)
+        arr_delay[m, n_sensors + m] = np.exp(-1j * 3 * PI / 4) / np.sqrt(2)
+    id = np.array([[1], [0]])
     for k_idx in range(n_bins):
         D = dx_k[k_idx, :]
         D = D.reshape(-1, 1)
@@ -411,7 +416,6 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
                         Q = np.hstack([np.real(Dx), np.imag(Dx)])
                         try:
                             iCorr_O = inv(Corr_O + np.eye(n_sensors)*epsilon)
-                            id = np.array([[1], [0]])
                             Fm_lk = iCorr_O @ Q @ inv(tr(Q) @ iCorr_O @ Q)
                             Fm_lk = Fm_lk @ id
                         except np.linalg.LinAlgError:
@@ -432,16 +436,11 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
                                     Oj = o2[:, idx_j-n_sensors].reshape(-1, 1)
                                 Corr_O[idx_i, idx_j] = np.real(tr(Oi) @ Oj).item()
                                 Corr_O[idx_j, idx_i] = Corr_O[idx_i, idx_j]
-                        
-                        arr_delay = np.zeros([n_sensors, 2*n_sensors], dtype=complex)
-                        for m in range(n_sensors):
-                            arr_delay[m, m] = np.exp(1j*3*PI/4) / np.sqrt(2)
-                            arr_delay[m, n_sensors+m] = np.exp(-1j*3*PI/4) / np.sqrt(2)
+                    
                         Dx = he(arr_delay) @ ((dx_k_star[k_idx, :]).reshape(-1, 1))
                         Q = np.hstack([np.real(Dx), np.imag(Dx)])
                         try:
                             iCorr_O = inv(Corr_O)
-                            id = np.array([[1], [0]])
                             Fm_lk = iCorr_O @ Q @ inv(tr(Q) @ iCorr_O @ Q)
                             Fm_lk = Fm_lk @ id
                         except np.linalg.LinAlgError:
@@ -631,8 +630,8 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
 
 def main():
     freqmodes = [
-        'ssbt',
-        'stft',
+        # 'ssbt',
+        # 'stft',
         'ssbt-true'
     ]
     
@@ -651,6 +650,7 @@ def main():
     else:
         for comb in combs:
             sim_parser(comb)
+
 
 if __name__ == '__main__':
     main()

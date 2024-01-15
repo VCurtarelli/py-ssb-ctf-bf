@@ -3,6 +3,8 @@ import os
 import numpy as np
 import scipy.linalg
 from numpy.linalg import inv, det
+
+import filters
 from functions import *
 import scipy.special as spsp
 import scipy as sp
@@ -20,17 +22,18 @@ np.set_printoptions(suppress=True, precision=6, threshold=sys.maxsize)
 
 
 def sim_parser(comb):
-    simulation(freq_mode=comb[0], signal_mode='load', n_per_seg=comb[1])
+    simulation(freq_mode=comb[0], signal_mode='load', form_mode=comb[1], n_per_seg=comb[2])
 
 
-def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
-    print('Stt:', freq_mode.upper(), n_per_seg)
+def simulation(freq_mode: str = 'stft', signal_mode='random', form_mode='reject', n_per_seg=32):
     """
     Parameters
     ----------
     freq_mode: str
-        Which to use, STFT or SSBT. Defaults to STFT.
-    sig_mode: str
+        Which transform to use, STFT or SSBT. Defaults to STFT.
+    form_mode: str
+        Which reverb formulation to use, 'reject' or 'aware'. Defaults to 'reject'.
+    signal_mode: str
         Which signals to use, 'random' or 'load'. Defaults to 'random'.
     n_per_seg: int
         Number of samples per window in transforms. Defaults to 32.
@@ -38,6 +41,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     -------
 
     """
+    print('Stt:', freq_mode.upper(), '|', form_mode, '|', n_per_seg)
     
     # Info: Abbreviations
     #       RIR         : Room Impulse Response
@@ -59,7 +63,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
         ------------------
     """
     freq_mode = freq_mode.lower()
-    if freq_mode not in ['ssbt', 'stft', 'ssbt-true']:
+    if freq_mode not in ['nssbt', 'stft', 'tssbt']:
         raise SyntaxError('Invalid frequency mode.')
     
     """
@@ -95,7 +99,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     
     global n_bins, F_lk_star, geft
     match freq_mode:
-        case 'ssbt' | 'ssbt-true':
+        case 'nssbt' | 'tssbt':
             n_bins = n_per_seg
             geft = ssbt
         
@@ -367,100 +371,96 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
         dist_fil = n_win_Y
         win_p_fil = n_win_Y
     
-    F_lk = np.empty((n_bins, int(np.ceil(n_win_Y / dist_fil)), n_sensors), dtype=complex)
-    n_win_F = F_lk.shape[1]
+    n_win_F = int(np.ceil(n_win_Y / dist_fil))
+    F_lk = np.empty((n_bins, n_win_F, n_sensors), dtype=complex)
     arr_delay = np.zeros([n_sensors, 2 * n_sensors], dtype = complex)
     for m in range(n_sensors):
-        arr_delay[m, m] = np.exp(1j * 3 * PI / 4) / np.sqrt(2)
-        arr_delay[m, n_sensors + m] = np.exp(-1j * 3 * PI / 4) / np.sqrt(2)
-    id = np.array([[1], [0]])
+        arr_delay[m, m] = np.exp(1j*3*np.pi/4) / np.sqrt(2)
+        arr_delay[m, n_sensors + m] = (-1j*3*np.pi/4) / np.sqrt(2)
+    
     for k_idx in range(n_bins):
-        D = dx_k[k_idx, :]
-        D = D.reshape(-1, 1)
         for l_idx in range(n_win_F):
             # INFO: Separating necessary windows of Y_lk, and calculating coherence matrix
             idx_stt = max(0, (l_idx + 1) * dist_fil - win_p_fil)
             idx_end = min((l_idx + 1) * dist_fil, n_win_Y)
             sig = Y_lk
-            match freq_mode:
-                case 'stft' | 'ssbt':
-                    O = sig[k_idx, idx_stt:idx_end, :]
-                    Corr_O = np.empty([n_sensors, n_sensors], dtype=complex)
-                    for idx_i in range(n_sensors):
-                        for idx_j in range(idx_i, n_sensors):
-                            Oi = O[:, idx_i].reshape(-1, 1)
-                            Oj = O[:, idx_j].reshape(-1, 1)
-                            Corr_O[idx_i, idx_j] = (he(Oi) @ Oj).item()
-                            Corr_O[idx_j, idx_i] = np.conj(Corr_O[idx_i, idx_j])
-                    try:
-                        iCorr_O = inv(Corr_O)
-                        F_lk[k_idx, l_idx, :] = ((iCorr_O @ D) / (he(D) @ iCorr_O @ D + epsilon)).reshape(n_sensors)
-                    except np.linalg.LinAlgError:
-                        F_lk[k_idx, l_idx, :] = 0
+            match (freq_mode, form_mode):
+                case ('stft', 'reject'):
+                    F_lk[k_idx, l_idx] = \
+                        filters.stft_mvdr_1(sig[k_idx, idx_stt:idx_end, :],
+                                            n_sensors,
+                                            dx_k[k_idx, :].reshape(-1, 1),
+                                            epsilon)
                 
-                case 'ssbt-true':
+                case ('stft', 'aware'):
+                    F_lk[k_idx, l_idx] = \
+                        filters.stft_mvdr_2(sig[k_idx, idx_stt:idx_end, :],
+                                            n_sensors,
+                                            B_lk[k_idx, :, :],
+                                            l_des_win,
+                                            epsilon)
+                
+                case ('nssbt', 'reject'):
+                    F_lk[k_idx, l_idx] = \
+                        filters.nssbt_mvdr_1(sig[k_idx, idx_stt:idx_end, :],
+                                             n_sensors,
+                                             dx_k[k_idx, :].reshape(-1, 1),
+                                             epsilon)
+                
+                case ('nssbt', 'aware'):
+                    F_lk[k_idx, l_idx] = \
+                        filters.nssbt_mvdr_2(sig[k_idx, idx_stt:idx_end, :],
+                                             n_sensors,
+                                             B_lk[k_idx, :, :],
+                                             l_des_win,
+                                             epsilon)
+                    
+                case ('tssbt', 'reject'):
                     if k_idx >= n_bins_star:
                         continue
-                    o1 = sig[k_idx, idx_stt:idx_end, :]
-                    if k_idx == 0 or (k_idx == n_bins_star and n_bins/2 == n_bins//2):
-                        # Info: Breaks if k=0 or k=K/2 with K even, so this shall be considered.
-                        Corr_O = np.empty((n_sensors, n_sensors), dtype=float)
-                        for idx_i in range(n_sensors):
-                            for idx_j in range(n_sensors):
-                                Oi = o1[:, idx_i].reshape(-1, 1)
-                                Oj = o1[:, idx_j].reshape(-1, 1)
-                                Corr_O[idx_i, idx_j] = np.real(tr(Oi) @ Oj).item()
-                                Corr_O[idx_j, idx_i] = Corr_O[idx_i, idx_j]
-                                
-                        Dx = (dx_k_star[k_idx, :]).reshape(-1, 1)
-                        Q = np.hstack([np.real(Dx), np.imag(Dx)])
-                        try:
-                            iCorr_O = inv(Corr_O + np.eye(n_sensors)*epsilon)
-                            Fm_lk = iCorr_O @ Q @ inv(tr(Q) @ iCorr_O @ Q)
-                            Fm_lk = Fm_lk @ id
-                        except np.linalg.LinAlgError:
-                            Fm_lk = np.zeros((n_sensors, 1))
-                        F_lk[k_idx, l_idx, :] = Fm_lk.reshape(n_sensors)
+                    Fm_lk = \
+                        filters.tssbt_mvdr_1(sig[k_idx, idx_stt:idx_end, :],
+                                             sig[-k_idx, idx_stt:idx_end, :],
+                                             n_sensors,
+                                             arr_delay,
+                                             dx_k_star[k_idx, :].reshape(-1, 1),
+                                             epsilon)
+                    if k_idx == 0 or (k_idx == n_bins_star-1 and n_bins/2 == n_bins//2):
+                        F_lk[k_idx, l_idx, :] = Fm_lk
                     else:
-                        o2 = sig[n_bins-k_idx, idx_stt:idx_end, :]
-                        Corr_O = np.empty((2*n_sensors, 2*n_sensors), dtype=float)
-                        for idx_i in range(2*n_sensors):
-                            for idx_j in range(2*n_sensors):
-                                if idx_i < n_sensors:
-                                    Oi = o1[:, idx_i].reshape(-1, 1)
-                                else:
-                                    Oi = o2[:, idx_i-n_sensors].reshape(-1, 1)
-                                if idx_j < n_sensors:
-                                    Oj = o1[:, idx_j].reshape(-1, 1)
-                                else:
-                                    Oj = o2[:, idx_j-n_sensors].reshape(-1, 1)
-                                Corr_O[idx_i, idx_j] = np.real(tr(Oi) @ Oj).item()
-                                Corr_O[idx_j, idx_i] = Corr_O[idx_i, idx_j]
+                        F_lk[k_idx, l_idx, :] = Fm_lk[:n_sensors].reshape(n_sensors)
+                        F_lk[-k_idx, l_idx, :] = Fm_lk[n_sensors:].reshape(n_sensors)
                     
-                        Dx = he(arr_delay) @ ((dx_k_star[k_idx, :]).reshape(-1, 1))
-                        Q = np.hstack([np.real(Dx), np.imag(Dx)])
-                        try:
-                            iCorr_O = inv(Corr_O)
-                            Fm_lk = iCorr_O @ Q @ inv(tr(Q) @ iCorr_O @ Q)
-                            Fm_lk = Fm_lk @ id
-                        except np.linalg.LinAlgError:
-                            Fm_lk = np.zeros((2*n_sensors, 1))
-                        F_lk[k_idx, l_idx, :] = Fm_lk[:n_sensors, 0].reshape(n_sensors)
-                        F_lk[n_bins-k_idx, l_idx, :] = Fm_lk[n_sensors:, 0].reshape(n_sensors)
+                case ('tssbt', 'aware'):
+                    if k_idx >= n_bins_star:
+                        continue
+                    Fm_lk = \
+                        filters.tssbt_mvdr_2(sig[k_idx, idx_stt:idx_end, :],
+                                             sig[-k_idx, idx_stt:idx_end, :],
+                                             n_sensors,
+                                             arr_delay,
+                                             B_lk_star[k_idx, :, :].reshape(-1, 1),
+                                             l_des_win,
+                                             epsilon)
+                    if k_idx == 0 or (k_idx == n_bins_star-1 and n_bins / 2 == n_bins // 2):
+                        F_lk[k_idx, l_idx, :] = Fm_lk
+                    else:
+                        F_lk[k_idx, l_idx, :] = Fm_lk[:n_sensors].reshape(n_sensors)
+                        F_lk[-k_idx, l_idx, :] = Fm_lk[n_sensors:].reshape(n_sensors)
     
     # Info: Assuring filter is in STFT
     match freq_mode:
         case 'stft':
             # Info: F_lk_star.shape = [n_bins_star, n_win_F, n_sensors]
             F_lk_star = F_lk
-        case 'ssbt':
+        case 'nssbt':
             F_lk_star = np.empty((n_bins_star, n_win_F, n_sensors), dtype=complex)
             for l_idx in range(n_win_F):
                 for m in range(n_sensors):
                     fm_ln = irft(F_lk[:, l_idx, m])
                     Fm_lk = fft(fm_ln)[:Y_lk_star.shape[0]]
                     F_lk_star[:, l_idx, m] = Fm_lk
-        case 'ssbt-true':
+        case 'tssbt':
             F_lk_star = np.empty((n_bins_star, n_win_F, n_sensors), dtype=complex)
             for l_idx in range(n_win_F):
                 for k_idx in range(n_bins_star):
@@ -624,24 +624,28 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
         f.write(color_defs)
         f.close()
     
-    print('End:', freq_mode, n_per_seg)
+    print('End:', freq_mode.upper(), '|', form_mode, '|', n_per_seg)
     return None
 
 
 def main():
     freqmodes = [
-        # 'ssbt',
         # 'stft',
-        'ssbt-true'
+        # 'nssbt',
+        'tssbt'
+    ]
+    
+    formmodes = [
+        'reject',
+        # 'aware'
     ]
     
     npersegs = [
         32,
-        64,
-        128
+        # 64,
     ]
     
-    combs = [(freqmode, nperseg) for freqmode in freqmodes for nperseg in npersegs]
+    combs = [(freqmode, formmode, nperseg) for freqmode in freqmodes for formmode in formmodes for nperseg in npersegs]
     ncombs = min(len(combs), 4)
     parallel = True
     if parallel:

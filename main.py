@@ -59,7 +59,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
         ------------------
     """
     freq_mode = freq_mode.lower()
-    if freq_mode not in ['ssbt', 'stft', 'ssbt-true']:
+    if freq_mode not in ['nssbt', 'stft', 'tssbt']:
         raise SyntaxError('Invalid frequency mode.')
     
     """
@@ -95,7 +95,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
     
     global n_bins, F_lk_star, geft
     match freq_mode:
-        case 'ssbt' | 'ssbt-true':
+        case 'nssbt' | 'tssbt':
             n_bins = n_per_seg
             geft = ssbt
         
@@ -383,7 +383,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
             idx_end = min((l_idx + 1) * dist_fil, n_win_Y)
             sig = Y_lk
             match freq_mode:
-                case 'stft' | 'ssbt':
+                case 'stft' | 'nssbt':
                     O = sig[k_idx, idx_stt:idx_end, :]
                     Corr_O = np.empty([n_sensors, n_sensors], dtype=complex)
                     for idx_i in range(n_sensors):
@@ -398,7 +398,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
                     except np.linalg.LinAlgError:
                         F_lk[k_idx, l_idx, :] = 0
                 
-                case 'ssbt-true':
+                case 'tssbt':
                     if k_idx >= n_bins_star:
                         continue
                     o1 = sig[k_idx, idx_stt:idx_end, :]
@@ -453,14 +453,14 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
         case 'stft':
             # Info: F_lk_star.shape = [n_bins_star, n_win_F, n_sensors]
             F_lk_star = F_lk
-        case 'ssbt':
+        case 'nssbt':
             F_lk_star = np.empty((n_bins_star, n_win_F, n_sensors), dtype=complex)
             for l_idx in range(n_win_F):
                 for m in range(n_sensors):
                     fm_ln = irft(F_lk[:, l_idx, m])
                     Fm_lk = fft(fm_ln)[:Y_lk_star.shape[0]]
                     F_lk_star[:, l_idx, m] = Fm_lk
-        case 'ssbt-true':
+        case 'tssbt':
             F_lk_star = np.empty((n_bins_star, n_win_F, n_sensors), dtype=complex)
             for l_idx in range(n_win_F):
                 for k_idx in range(n_bins_star):
@@ -630,15 +630,14 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', n_per_seg=32):
 
 def main():
     freqmodes = [
-        # 'ssbt',
         # 'stft',
-        'ssbt-true'
+        # 'nssbt',
+        'tssbt'
     ]
     
     npersegs = [
         32,
         64,
-        128
     ]
     
     combs = [(freqmode, nperseg) for freqmode in freqmodes for nperseg in npersegs]

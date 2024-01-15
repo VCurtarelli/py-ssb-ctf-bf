@@ -373,10 +373,12 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', form_mode='reject'
     
     n_win_F = int(np.ceil(n_win_Y / dist_fil))
     F_lk = np.empty((n_bins, n_win_F, n_sensors), dtype=complex)
-    arr_delay = np.zeros([n_sensors, 2 * n_sensors], dtype = complex)
+    arr_delay = np.zeros([n_sensors, 2 * n_sensors], dtype=complex)
+    # arr_delay_fac = np.exp(-1*3*np.pi/4) / np.sqrt(2)
+    arr_delay_fac = 1
     for m in range(n_sensors):
-        arr_delay[m, m] = np.exp(1j*3*np.pi/4) / np.sqrt(2)
-        arr_delay[m, n_sensors + m] = (-1j*3*np.pi/4) / np.sqrt(2)
+        arr_delay[m, m] = arr_delay_fac
+        arr_delay[m, n_sensors + m] = np.conj(arr_delay_fac)
     
     for k_idx in range(n_bins):
         for l_idx in range(n_win_F):
@@ -439,7 +441,7 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', form_mode='reject'
                                              sig[-k_idx, idx_stt:idx_end, :],
                                              n_sensors,
                                              arr_delay,
-                                             B_lk_star[k_idx, :, :].reshape(-1, 1),
+                                             B_lk_star[k_idx, :, :],
                                              l_des_win,
                                              epsilon)
                     if k_idx == 0 or (k_idx == n_bins_star-1 and n_bins / 2 == n_bins // 2):
@@ -464,11 +466,8 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', form_mode='reject'
             F_lk_star = np.empty((n_bins_star, n_win_F, n_sensors), dtype=complex)
             for l_idx in range(n_win_F):
                 for k_idx in range(n_bins_star):
-                    if k_idx == 0:
-                        F_lk_star[k_idx, l_idx, :] = F_lk[k_idx, l_idx, :]
-                    else:
-                        Fs = np.vstack([F_lk[k_idx, l_idx, :].reshape(-1, 1), F_lk[n_bins-k_idx, l_idx, :].reshape(-1, 1)])
-                        F_lk_star[k_idx, l_idx, :] = (arr_delay @ Fs).reshape(-1)
+                    Fs = np.vstack([F_lk[k_idx, l_idx, :].reshape(-1, 1), F_lk[-k_idx, l_idx, :].reshape(-1, 1)])
+                    F_lk_star[k_idx, l_idx, :] = (arr_delay @ Fs).reshape(-1)
     
     Sf_lk_star = np.empty((n_bins_star, n_win_Y), dtype=complex)
     Wf_lk_star = np.empty((n_bins_star, n_win_Y), dtype=complex)
@@ -561,7 +560,10 @@ def simulation(freq_mode: str = 'stft', signal_mode='random', form_mode='reject'
     exp_DSDI_k = '\n'.join(exp_DSDI_k)
     
     freq_mode = freq_mode.upper()
-    filename = '_' + freq_mode + '_' + str(n_per_seg)
+    filename = '_'.join(['',
+                         freq_mode,
+                         form_mode,
+                         str(n_per_seg)])
     folder = 'io_output/' + freq_mode + '/'
     if not os.path.isdir('io_output/'):
         os.mkdir('io_output/')
@@ -636,18 +638,18 @@ def main():
     ]
     
     formmodes = [
-        'reject',
-        # 'aware'
+        # 'reject',
+        'aware'
     ]
     
     npersegs = [
         32,
-        # 64,
+        64,
     ]
     
     combs = [(freqmode, formmode, nperseg) for freqmode in freqmodes for formmode in formmodes for nperseg in npersegs]
     ncombs = min(len(combs), 4)
-    parallel = True
+    parallel = False
     if parallel:
         with Pool(ncombs) as p:
             p.map(sim_parser, combs)
